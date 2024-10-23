@@ -1,40 +1,34 @@
 from unittest.mock import Mock, patch
 import pytest
 
-from storage_manager import BrainStorageManager
+from storage_manager import GCPStorageManager
 from ocr_processor import OCRProcessor
-from text_improver import TextImprover
+from claude_client import TextImprover, ClaudeResponse
 from embedding_generator import EmbeddingGenerator
 from brain_processor import BrainProcessor, OCRResult
 from errors import BrainProcessingError, StorageError, OCRError, EmbeddingError
 
 
-class TestBrainStorageManager:
-    """Test suite for BrainStorageManager class."""
+class TestGCPStorageManager:
+    """Test suite for GCPStorageManager class."""
 
     @pytest.fixture
     def storage_manager(self):
-        """Creates a BrainStorageManager instance with mock client."""
+        """Creates a GCPStorageManager instance with mock client."""
         with patch("google.cloud.storage.Client") as mock_client:
-            manager = BrainStorageManager(
+            manager = GCPStorageManager(
                 project_id="test-project",
-                brain_bucket="test-brain",
-                vs_bucket="test-vs",
             )
             manager.storage_client = mock_client
             return manager
 
     def test_initialization(self):
-        """Test successful initialization of BrainStorageManager."""
+        """Test successful initialization of GCPStorageManager."""
         with patch("google.cloud.storage.Client") as mock_client:
-            manager = BrainStorageManager(
+            manager = GCPStorageManager(
                 project_id="test-project",
-                brain_bucket="test-brain",
-                vs_bucket="test-vs",
             )
             assert manager.project_id == "test-project"
-            assert manager.brain_bucket == "test-brain"
-            assert manager.vs_bucket == "test-vs"
             mock_client.assert_called_once_with(project="test-project")
 
     def test_initialization_failure(self):
@@ -43,10 +37,8 @@ class TestBrainStorageManager:
             "google.cloud.storage.Client", side_effect=Exception("Connection failed")
         ):
             with pytest.raises(StorageError) as exc_info:
-                BrainStorageManager(
+                GCPStorageManager(
                     project_id="test-project",
-                    brain_bucket="test-brain",
-                    vs_bucket="test-vs",
                 )
             assert "Storage client initialization failed" in str(exc_info.value)
 
@@ -80,8 +72,8 @@ class TestBrainStorageManager:
         mock_bucket.blob.return_value = mock_blob
         storage_manager.storage_client.bucket.return_value = mock_bucket
 
-        result = storage_manager.upload_json(
-            json_data='{"test": "data"}',
+        result = storage_manager.upload_data(
+            data='{"test": "data"}',
             file_name="test.json",
             bucket_name="test-bucket",
         )
@@ -159,39 +151,54 @@ class TestTextImprover:
     @pytest.fixture
     def text_improver(self):
         """Creates a TextImprover instance with mock client."""
-        with patch("anthropic.Anthropic") as mock_anthropic:
-            improver = TextImprover("test-key")
-            improver.client = mock_anthropic
+        with patch("claude_client.ClaudeClient") as mock_claude:
+            improver = TextImprover("test-k[ey")
+            improver.claude_client = mock_claude
             return improver
 
     def test_initialization(self):
         """Test successful initialization of TextImprover."""
-        with patch("anthropic.Anthropic") as mock_anthropic:
+        with patch("claude_client.ClaudeClient") as mock_claude:
             improver = TextImprover("test-key")
-            mock_anthropic.assert_called_once_with(api_key="test-key")
-            assert isinstance(improver.system_message, str)
+            mock_claude.assert_called_once_with("test-key")
+            assert isinstance(improver.SYSTEM_MESSAGE, str)
+
+    def test_initialization_with_named_parameter(self):
+        """Test initialization with named parameter."""
+        with patch("claude_client.ClaudeClient") as mock_claude:
+            improver = TextImprover(api_key="test-key")
+            # Alternative test for named parameter
+            mock_claude.assert_called_once_with("test-key")
+            assert isinstance(improver.SYSTEM_MESSAGE, str)
 
     def test_initialization_failure(self):
         """Test initialization failure handling."""
-        with patch("anthropic.Anthropic", side_effect=Exception("Anthropic API error")):
+        with patch(
+            "claude_client.ClaudeClient",
+            side_effect=BrainProcessingError("Claude client error"),
+        ):
             with pytest.raises(BrainProcessingError) as exc_info:
                 TextImprover("test-key")
-            assert "Anthropic client initialization failed" in str(exc_info.value)
+            assert "Claude client error" in str(exc_info.value)
 
     def test_improve_text(self, text_improver):
         """Test text improvement functionality."""
-        mock_message = Mock()
-        mock_message.content = [Mock(text="Improved text")]
-        text_improver.client.messages.create.return_value = mock_message
+        mock_response = Mock(spec=ClaudeResponse)
+        mock_response.content = "Improved text"
+        text_improver.claude_client.process_text.return_value = mock_response
 
         result = text_improver.improve_text("Raw text")
 
         assert result == "Improved text"
-        text_improver.client.messages.create.assert_called_once()
+        text_improver.claude_client.process_text.assert_called_once_with(
+            text="Raw text", system_message=TextImprover.SYSTEM_MESSAGE
+        )
 
     def test_improve_text_failure(self, text_improver):
         """Test failure handling in text improvement."""
-        text_improver.client.messages.create.side_effect = Exception("API error")
+        text_improver.claude_client.process_text.side_effect = BrainProcessingError(
+            "Processing failed"
+        )
 
         with pytest.raises(BrainProcessingError) as exc_info:
             text_improver.improve_text("Raw text")
@@ -263,7 +270,7 @@ class TestBrainProcessor:
         """Creates a BrainProcessor instance with mock components."""
         with patch.multiple(
             "brain_processor",
-            BrainStorageManager=Mock(),
+            GCPStorageManager=Mock(),
             OCRProcessor=Mock(),
             TextImprover=Mock(),
             EmbeddingGenerator=Mock(),
@@ -276,7 +283,7 @@ class TestBrainProcessor:
         """Test successful initialization of BrainProcessor."""
         with patch.multiple(
             "brain_processor",
-            BrainStorageManager=Mock(),
+            GCPStorageManager=Mock(),
             OCRProcessor=Mock(),
             TextImprover=Mock(),
             EmbeddingGenerator=Mock(),
@@ -292,7 +299,7 @@ class TestBrainProcessor:
     def test_initialization_failure(self, config):
         """Test initialization failure handling."""
         with patch(
-            "brain_processor.BrainStorageManager",
+            "brain_processor.GCPStorageManager",
             side_effect=Exception("Storage error"),
         ):
             with pytest.raises(BrainProcessingError) as exc_info:

@@ -13,29 +13,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class BrainStorageManager:
+class GCPStorageManager:
     """
     Manages Google Cloud Storage operations for the brain processing pipeline.
 
     Attributes:
         project_id (str): Google Cloud project ID
-        brain_bucket (str): Name of the bucket storing original documents
-        vs_bucket (str): Name of the bucket storing vector store data
-        storage_client (storage.Client): Google Cloud Storage client
     """
 
-    def __init__(self, project_id: str, brain_bucket: str, vs_bucket: str):
+    def __init__(self, project_id: str):
         """
         Initialize the storage manager.
 
         Args:
             project_id (str): Google Cloud project ID
-            brain_bucket (str): Name of the brain storage bucket
-            vs_bucket (str): Name of the vector store bucket
         """
         self.project_id = project_id
-        self.brain_bucket = brain_bucket
-        self.vs_bucket = vs_bucket
         try:
             self.storage_client = storage.Client(project=project_id)
             logger.info(f"Initialized storage client for project {project_id}")
@@ -70,7 +63,13 @@ class BrainStorageManager:
             raise StorageError(f"Failed to list blobs: {str(e)}")
 
     @retry_with_backoff()
-    def upload_json(self, json_data: str, file_name: str, bucket_name: str) -> str:
+    def upload_data(
+        self,
+        data: str,
+        file_name: str,
+        bucket_name: str,
+        content_type: str = "application/json",
+    ) -> str:
         """
         Uploads JSON data to a specified GCP bucket.
 
@@ -88,7 +87,7 @@ class BrainStorageManager:
         try:
             bucket = self.storage_client.bucket(bucket_name)
             blob = bucket.blob(file_name)
-            blob.upload_from_string(json_data, content_type="application/json")
+            blob.upload_from_string(data, content_type=content_type)
             logger.info(f"Successfully uploaded {file_name} to {bucket_name}")
             return file_name
         except Exception as e:

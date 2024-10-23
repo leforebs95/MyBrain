@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from functools import wraps
 from time import sleep
 
-from storage_manager import BrainStorageManager
+from storage_manager import GCPStorageManager
 from ocr_processor import OCRProcessor
-from text_improver import TextImprover
+from claude_client import TextImprover
 from embedding_generator import EmbeddingGenerator
 from vector_store_manager import VectorStoreManager
 from errors import BrainProcessingError, StorageError
@@ -45,7 +45,7 @@ class BrainProcessor:
     Main class that orchestrates the entire brain processing pipeline.
 
     Attributes:
-        storage_manager (BrainStorageManager): Storage manager instance
+        storage_manager (GCPStorageManager): Storage manager instance
         ocr_processor (OCRProcessor): OCR processor instance
         text_improver (TextImprover): Text improver instance
         embedding_generator (EmbeddingGenerator): Embedding generator instance
@@ -60,7 +60,7 @@ class BrainProcessor:
             config (Dict[str, str]): Configuration dictionary containing necessary API keys and settings
         """
         try:
-            self.storage_manager = BrainStorageManager(
+            self.storage_manager = GCPStorageManager(
                 project_id=config["project_id"],
                 brain_bucket=config["brain_bucket"],
                 vs_bucket=config["vs_bucket"],
@@ -177,7 +177,7 @@ class BrainProcessor:
                     "embedding": result.embedding,
                 }
 
-                self.storage_manager.upload_json(
+                self.storage_manager.upload_data(
                     json.dumps(result_dict), output_file, self.storage_manager.vs_bucket
                 )
                 logger.info(f"Saved results for {result.input_pdf} to {output_file}")

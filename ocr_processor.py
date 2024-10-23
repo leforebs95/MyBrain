@@ -1,7 +1,7 @@
 from google.cloud import vision
 import logging
 
-from storage_manager import BrainStorageManager
+from storage_manager import GCPStorageManager
 from errors import OCRError
 from utils import retry_with_backoff
 
@@ -17,16 +17,16 @@ class OCRProcessor:
     Handles OCR processing using Google Cloud Vision API.
 
     Attributes:
-        storage_manager (BrainStorageManager): Storage manager instance
+        storage_manager (GCPStorageManager): Storage manager instance
         vision_client (vision.ImageAnnotatorClient): Vision API client
     """
 
-    def __init__(self, storage_manager: BrainStorageManager):
+    def __init__(self, storage_manager: GCPStorageManager):
         """
         Initialize the OCR processor.
 
         Args:
-            storage_manager (BrainStorageManager): Instance of storage manager
+            storage_manager (GCPStorageManager): Instance of storage manager
         """
         self.storage_manager = storage_manager
         try:
