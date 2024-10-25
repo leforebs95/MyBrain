@@ -61,14 +61,14 @@ class BrainProcessor:
         """
         try:
             self.storage_manager = GCPStorageManager(
-                project_id=config["project_id"],
-                brain_bucket=config["brain_bucket"],
-                vs_bucket=config["vs_bucket"],
+                project_id=config["gcp_project_id"]
             )
             self.ocr_processor = OCRProcessor(self.storage_manager)
             self.text_improver = TextImprover(config["anthropic_api_key"])
             self.embedding_generator = EmbeddingGenerator(config["voyage_api_key"])
-            self.vector_store = VectorStoreManager(config["project_id"])
+            self.vector_store = VectorStoreManager(
+                config["gcp_project_id"], config["gcp_location"]
+            )
             logger.info("Initialized BrainProcessor with all components")
         except Exception as e:
             logger.error(f"Failed to initialize BrainProcessor: {str(e)}")
@@ -76,7 +76,9 @@ class BrainProcessor:
                 f"BrainProcessor initialization failed: {str(e)}"
             )
 
-    def process_document(self, input_pdf: str) -> OCRResult:
+    def process_document(
+        self, input_bucket: str, input_pdf: str, output_bucket: str, output_base: str
+    ) -> OCRResult:
         """
         Processes a single document through the entire pipeline.
 
@@ -93,9 +95,8 @@ class BrainProcessor:
             logger.info(f"Starting processing for document: {input_pdf}")
 
             # Construct paths
-            gcs_source_uri = f"gs://{self.storage_manager.brain_bucket}/{input_pdf}"
-            output_base = input_pdf.replace(".pdf", "_")
-            gcs_destination_uri = f"gs://{self.storage_manager.vs_bucket}/{output_base}"
+            gcs_source_uri = f"gs://{input_bucket}/{input_pdf}"
+            gcs_destination_uri = f"gs://{output_bucket}/{output_base}"
 
             # Create result object
             result = OCRResult(
