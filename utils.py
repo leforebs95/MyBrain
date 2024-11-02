@@ -1,6 +1,10 @@
+from typing import Dict, Optional
+import logging
+from dataclasses import dataclass, field
 from functools import wraps
 from time import sleep
-import logging
+from datetime import datetime
+
 
 # Configure logging
 logging.basicConfig(
@@ -9,7 +13,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def retry_with_backoff(retries=3, backoff_in_seconds=1):
+class RetryStrategy:
+    """
+    Defines the retry behavior for failed operations.
+
+    Attributes:
+        max_retries (int): Maximum number of retry attempts
+        initial_delay (float): Initial delay between retries in seconds
+        max_delay (float): Maximum delay between retries in seconds
+        backoff_factor (float): Factor to increase delay between retries
+    """
+
+    def __init__(
+        self,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+        max_delay: float = 30.0,
+        backoff_factor: float = 2.0,
+    ):
+        self.max_retries = max_retries
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.backoff_factor = backoff_factor
+
+    def get_delay(self, attempt: int) -> float:
+        """Calculate delay for a specific retry attempt."""
+        delay = self.initial_delay * (self.backoff_factor ** (attempt - 1))
+        return min(delay, self.max_delay)
+
+
+def retry_with_backoff(retry_strategy: RetryStrategy = RetryStrategy()):
     """
     Decorator for retrying operations with exponential backoff.
 
@@ -17,6 +50,8 @@ def retry_with_backoff(retries=3, backoff_in_seconds=1):
         retries (int): Maximum number of retries
         backoff_in_seconds (int): Initial backoff time in seconds
     """
+    retries = retry_strategy.max_retries
+    backoff_in_seconds = retry_strategy.backoff_factor
 
     def decorator(func):
         @wraps(func)

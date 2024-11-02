@@ -3,7 +3,7 @@ import logging
 
 from storage_manager import GCPStorageManager
 from errors import OCRError
-from utils import retry_with_backoff
+from utils import RetryStrategy, retry_with_backoff
 
 # Configure logging
 logging.basicConfig(
@@ -36,7 +36,7 @@ class OCRProcessor:
             logger.error(f"Failed to initialize Vision API client: {str(e)}")
             raise OCRError(f"Vision API client initialization failed: {str(e)}")
 
-    @retry_with_backoff(retries=2, backoff_in_seconds=2)
+    @retry_with_backoff(RetryStrategy(max_retries=2, backoff_factor=2))
     def process_document(
         self, gcs_source_uri: str, gcs_destination_uri: str, batch_size: int = 2
     ) -> None:

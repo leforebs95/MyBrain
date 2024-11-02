@@ -258,7 +258,8 @@ class TestBrainProcessor:
     def config(self):
         """Creates a test configuration dictionary."""
         return {
-            "project_id": "test-project",
+            "gcp_project_id": "test-project",
+            "gcp_location": "us-central1",
             "brain_bucket": "test-brain",
             "vs_bucket": "test-vs",
             "anthropic_api_key": "test-anthropic-key",

@@ -166,3 +166,4 @@ cython_debug/
 
 # Repo Speciic
 project-management-notes/*
+.DS_Store
