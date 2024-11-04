@@ -71,10 +71,10 @@ class GCPStorageManager:
         content_type: str = "application/json",
     ) -> str:
         """
-        Uploads JSON data to a specified GCP bucket.
+        Uploads data to a specified GCP bucket.
 
         Args:
-            json_data (str): JSON data to upload
+            data (str): Data to upload
             file_name (str): Destination file name
             bucket_name (str): Destination bucket name
 
@@ -93,3 +93,35 @@ class GCPStorageManager:
         except Exception as e:
             logger.error(f"Failed to upload JSON: {str(e)}")
             raise StorageError(f"Failed to upload JSON: {str(e)}")
+
+    @retry_with_backoff()
+    def upload_file(
+        self,
+        file_path: str,
+        file_name: str,
+        bucket_name: str,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """
+        Uploads a file to a specified GCP bucket.
+
+        Args:
+            file_path (str): Path to the file to upload
+            file_name (str): Destination file name
+            bucket_name (str): Destination bucket name
+
+        Returns:
+            str: Name of the uploaded file
+
+        Raises:
+            StorageError: If the upload fails
+        """
+        try:
+            bucket = self.storage_client.bucket(bucket_name)
+            blob = bucket.blob(file_name)
+            blob.upload_from_filename(file_path, content_type=content_type)
+            logger.info(f"Successfully uploaded {file_name} to {bucket_name}")
+            return file_name
+        except Exception as e:
+            logger.error(f"Failed to upload file: {str(e)}")
+            raise StorageError(f"Failed to upload file: {str(e)}")
