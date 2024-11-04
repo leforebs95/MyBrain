@@ -193,8 +193,8 @@ class BrainProcessor:
                 )
 
                 self.ocr_processor.process_document(gcs_source_uri, gcs_destination_uri)
-                result.original_ocr = self.ocr_processor.extract_text(
-                    result.output_json
+                result.original_ocr = self.storage_manager.extract_ocr_text_from_result(
+                    bucket_name=job.output_bucket, extraction_prefix=result.output_json
                 )
                 result.improved_ocr = self.text_improver.improve_text(
                     result.original_ocr

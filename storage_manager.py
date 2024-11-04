@@ -125,3 +125,32 @@ class GCPStorageManager:
         except Exception as e:
             logger.error(f"Failed to upload file: {str(e)}")
             raise StorageError(f"Failed to upload file: {str(e)}")
+
+    def extract_ocr_text_from_result(
+        self, bucket_name: str, extraction_prefix: str
+    ) -> str:
+        """
+        Extracts text from a JSON file stored in a Google Cloud Storage bucket.
+        This function downloads a JSON file from the specified bucket and extraction prefix,
+        parses the JSON content, and extracts the full text annotations from the responses.
+        Args:
+            bucket_name (str): The name of the Google Cloud Storage bucket.
+            extraction_prefix (str): The prefix (path) to the JSON file within the bucket.
+        Returns:
+            str: The extracted text from the JSON file.
+        """
+        import json
+
+        # Get the bucket
+        bucket = self.storage_client.bucket(bucket_name)
+
+        # Get the blob (file) from the bucket
+        blob = bucket.blob(extraction_prefix)
+
+        # Download the file content as a string
+        json_content = blob.download_as_text()
+        to_json = json.loads(json_content)
+        text = "\n".join(
+            [resp["fullTextAnnotation"]["text"] for resp in to_json["responses"]]
+        )
+        return text
