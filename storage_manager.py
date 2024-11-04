@@ -66,7 +66,7 @@ class GCPStorageManager:
     def upload_data(
         self,
         data: str,
-        file_name: str,
+        prefix: str,
         bucket_name: str,
         content_type: str = "application/json",
     ) -> str:
@@ -75,7 +75,7 @@ class GCPStorageManager:
 
         Args:
             data (str): Data to upload
-            file_name (str): Destination file name
+            prefix (str): Destination file name
             bucket_name (str): Destination bucket name
 
         Returns:
@@ -86,10 +86,10 @@ class GCPStorageManager:
         """
         try:
             bucket = self.storage_client.bucket(bucket_name)
-            blob = bucket.blob(file_name)
+            blob = bucket.blob(prefix)
             blob.upload_from_string(data, content_type=content_type)
-            logger.info(f"Successfully uploaded {file_name} to {bucket_name}")
-            return file_name
+            logger.info(f"Successfully uploaded {prefix} to {bucket_name}")
+            return prefix
         except Exception as e:
             logger.error(f"Failed to upload JSON: {str(e)}")
             raise StorageError(f"Failed to upload JSON: {str(e)}")
@@ -98,7 +98,7 @@ class GCPStorageManager:
     def upload_file(
         self,
         file_path: str,
-        file_name: str,
+        prefix: str,
         bucket_name: str,
         content_type: str = "application/octet-stream",
     ) -> str:
@@ -107,7 +107,7 @@ class GCPStorageManager:
 
         Args:
             file_path (str): Path to the file to upload
-            file_name (str): Destination file name
+            prefix (str): Destination file name
             bucket_name (str): Destination bucket name
 
         Returns:
@@ -118,10 +118,10 @@ class GCPStorageManager:
         """
         try:
             bucket = self.storage_client.bucket(bucket_name)
-            blob = bucket.blob(file_name)
+            blob = bucket.blob(prefix)
             blob.upload_from_filename(file_path, content_type=content_type)
-            logger.info(f"Successfully uploaded {file_name} to {bucket_name}")
-            return file_name
+            logger.info(f"Successfully uploaded {prefix} to {bucket_name}")
+            return prefix
         except Exception as e:
             logger.error(f"Failed to upload file: {str(e)}")
             raise StorageError(f"Failed to upload file: {str(e)}")
