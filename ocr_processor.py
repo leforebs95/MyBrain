@@ -74,9 +74,64 @@ class OCRProcessor:
             )
             logger.info(f"Started OCR processing for {gcs_source_uri}")
 
-            operation.result(timeout=420)
+            result = operation.result(timeout=420)
             logger.info(f"Completed OCR processing for {gcs_source_uri}")
+            return result
 
         except Exception as e:
             logger.error(f"OCR processing failed: {str(e)}")
             raise OCRError(f"OCR processing failed: {str(e)}")
+
+    def list_result_uris(self, bucket_name: str, uri_pattern: str) -> list:
+        """Lists all the URIs in a GCP bucket that match a given pattern."""
+        try:
+            # Get the bucket
+            bucket = self.storage_manager.storage_client.bucket(bucket_name)
+
+            # List all the blobs in the bucket
+            blobs = bucket.list_blobs()
+
+            # Filter blobs that match the pattern
+            matching_uris = [
+                f"gs://{bucket_name}/{blob.name}"
+                for blob in blobs
+                if uri_pattern in blob.name
+            ]
+
+            return matching_uris
+        except Exception as e:
+            logger.error(f"Failed to list result URIs: {str(e)}")
+            raise OCRError(f"Failed to list result URIs: {str(e)}")
+
+    def extract_ocr_text_from_result(
+        self, bucket_name: str, extraction_prefix: str
+    ) -> str:
+        """
+        Extracts text from a JSON file stored in a Google Cloud Storage bucket.
+        This function downloads a JSON file from the specified bucket and extraction prefix,
+        parses the JSON content, and extracts the full text annotations from the responses.
+        Args:
+            bucket_name (str): The name of the Google Cloud Storage bucket.
+            extraction_prefix (str): The prefix (path) to the JSON file within the bucket.
+        Returns:
+            str: The extracted text from the JSON file.
+        """
+        import json
+
+        try:
+            # Get the bucket
+            bucket = self.storage_manager.storage_client.bucket(bucket_name)
+
+            # Get the blob (file) from the bucket
+            blob = bucket.blob(extraction_prefix)
+
+            # Download the file content as a string
+            json_content = blob.download_as_text()
+            to_json = json.loads(json_content)
+            text = "\n".join(
+                [resp["fullTextAnnotation"]["text"] for resp in to_json["responses"]]
+            )
+            return text
+        except Exception as e:
+            logger.error(f"Failed to extract OCR text from result: {str(e)}")
+            raise OCRError(f"Failed to extract OCR text from result: {str(e)}")
