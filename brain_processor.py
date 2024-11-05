@@ -30,14 +30,14 @@ class OCRResult:
 
     Attributes:
         input_pdf (str): Path to the input PDF file
-        output_json (str): Path to the output JSON file
+        output_base (str): Path to the output JSON file base uri
         original_ocr (str, optional): Raw OCR text
         improved_ocr (str, optional): Improved OCR text
         embedding (List[float], optional): Vector embedding of the improved text
     """
 
     input_pdf: str
-    output_json: str
+    output_base: str
     original_ocr: Optional[str] = None
     improved_ocr: Optional[str] = None
     embedding: Optional[List[float]] = None
@@ -189,13 +189,21 @@ class BrainProcessor:
 
                 result = OCRResult(
                     input_pdf=job.input_pdf,
-                    output_json=f"{job.output_base}_output-1-to-1.json",
+                    output_base=f"{job.output_base}",
                 )
 
-                self.ocr_processor.process_document(gcs_source_uri, gcs_destination_uri)
-                result.original_ocr = self.storage_manager.extract_ocr_text_from_result(
-                    bucket_name=job.output_bucket, extraction_prefix=result.output_json
+                self.ocr_processor.process_document(
+                    gcs_source_uri, gcs_destination_uri, batch_size=1
                 )
+                for uri in self.ocr_processor.list_result_uris(
+                    job.output_bucket, job.output_base
+                ):
+                    result.original_ocr += (
+                        "\n"
+                        + self.ocr_processor.extract_ocr_text_from_result(
+                            bucket_name=job.output_bucket, extraction_prefix=uri
+                        )
+                    )
                 result.improved_ocr = self.text_improver.improve_text(
                     result.original_ocr
                 )
@@ -340,7 +348,7 @@ class BrainProcessor:
                     output_file = f"{output_prefix}_{index}.json"
                     result_dict = {
                         "input_pdf": result.input_pdf,
-                        "output_json": result.output_json,
+                        "output_base": result.output_base,
                         "original_ocr": result.original_ocr,
                         "improved_ocr": result.improved_ocr,
                         "embedding": result.embedding,

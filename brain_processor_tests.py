@@ -78,7 +78,7 @@ def ocr_result():
     """Creates a test OCR result."""
     return OCRResult(
         input_pdf="test.pdf",
-        output_json="test_output.json",
+        output_base="test_output.json",
         original_ocr="Raw text",
         improved_ocr="Improved text",
         embedding=[0.1, 0.2, 0.3],
@@ -213,7 +213,7 @@ class TestBrainProcessor:
                     success=True,
                     result=OCRResult(
                         input_pdf="test0.pdf",
-                        output_json="test0_output.json",
+                        output_base="test0_output.json",
                         original_ocr="Raw text",
                         improved_ocr="Improved text",
                         embedding=[0.1, 0.2, 0.3],
