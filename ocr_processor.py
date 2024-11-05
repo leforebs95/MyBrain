@@ -92,11 +92,7 @@ class OCRProcessor:
             blobs = bucket.list_blobs()
 
             # Filter blobs that match the pattern
-            matching_uris = [
-                f"gs://{bucket_name}/{blob.name}"
-                for blob in blobs
-                if uri_pattern in blob.name
-            ]
+            matching_uris = [blob.name for blob in blobs if uri_pattern in blob.name]
 
             return matching_uris
         except Exception as e:
