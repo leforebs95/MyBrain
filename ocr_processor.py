@@ -93,7 +93,9 @@ class OCRProcessor:
 
             # Filter blobs that match the pattern
             matching_uris = [blob.name for blob in blobs if uri_pattern in blob.name]
-
+            logger.info(
+                f"Found {len(matching_uris)} matching URIs in bucket '{bucket_name}'"
+            )
             return matching_uris
         except Exception as e:
             logger.error(f"Failed to list result URIs: {str(e)}")
@@ -127,6 +129,7 @@ class OCRProcessor:
             text = "\n".join(
                 [resp["fullTextAnnotation"]["text"] for resp in to_json["responses"]]
             )
+            logger.info(f"Successfully extracted OCR text from result")
             return text
         except Exception as e:
             logger.error(f"Failed to extract OCR text from result: {str(e)}")
