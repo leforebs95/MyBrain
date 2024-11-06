@@ -4,6 +4,7 @@ from psycopg2.extras import Json
 import logging
 from dataclasses import dataclass
 
+from brain_processor import OCRResult
 from errors import DatabaseError
 from utils import retry_with_backoff
 
@@ -96,7 +97,7 @@ class DatabaseManager:
             self.conn.commit()
 
     @retry_with_backoff()
-    def store_document(self, doc_data: Dict) -> str:
+    def store_document(self, doc_data: OCRResult) -> str:
         """
         Store document data in PostgreSQL while simultaneously preparing JSONL for Vertex.AI.
 
@@ -124,13 +125,13 @@ class DatabaseManager:
                         updated_at = CURRENT_TIMESTAMP;
                 """,
                     (
-                        doc_data["id"],
-                        doc_data["input_pdf"],
-                        doc_data["output_base"],
-                        doc_data.get("original_ocr"),
-                        doc_data.get("improved_ocr"),
-                        doc_data.get("embedding"),
-                        Json(doc_data.get("metadata", {})),
+                        doc_data.id,
+                        doc_data.input_pdf,
+                        doc_data.output_base,
+                        doc_data.original_ocr,
+                        doc_data.improved_ocr,
+                        doc_data.embedding,
+                        Json(doc_data.metadata, {}),
                     ),
                 )
                 self.conn.commit()

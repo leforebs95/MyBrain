@@ -8,6 +8,7 @@ from time import sleep
 import threading
 from datetime import datetime
 
+from database_manager import DatabaseManager
 from storage_manager import GCPStorageManager
 from ocr_processor import OCRProcessor
 from claude_client import TextImprover
@@ -37,11 +38,13 @@ class OCRResult:
         embedding (List[float], optional): Vector embedding of the improved text
     """
 
+    id: str = field(default_factory=lambda: str(ULID()))
     input_pdf: str
     output_base: str
     original_ocr: Optional[str] = None
     improved_ocr: Optional[str] = None
     embedding: Optional[List[float]] = None
+    metadata: Dict = field(default_factory=dict)
 
 
 @dataclass
@@ -150,6 +153,7 @@ class BrainProcessor:
             self.storage_manager = GCPStorageManager(
                 project_id=config["gcp_project_id"]
             )
+            self.database_manager = DatabaseManager(config["database"])
             self.ocr_processor = OCRProcessor(self.storage_manager)
             self.text_improver = TextImprover(config["anthropic_api_key"])
             self.embedding_generator = EmbeddingGenerator(config["voyage_api_key"])
