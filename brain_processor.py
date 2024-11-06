@@ -169,84 +169,109 @@ class BrainProcessor:
         self, job: ProcessingJob, progress: ProcessingProgress
     ) -> ProcessingResult:
         """
-        Process a document with retry logic.
-
-        Args:
-            job (ProcessingJob): Processing job information
-            progress (ProcessingProgress): Progress tracker
-
-        Returns:
-            ProcessingResult: Result of processing attempts
+        Process a document with targeted retry logic for major steps.
         """
+        result = OCRResult(input_pdf=job.input_pdf, output_base=job.output_base)
+
+        # Step 1: OCR Processing and Text Extraction
         attempt = 1
         while attempt <= self.retry_strategy.max_retries:
             try:
-                logger.info(f"Processing {job.input_pdf} (Attempt {attempt})")
-
-                # Attempt processing
                 gcs_source_uri = f"gs://{job.input_bucket}/{job.input_pdf}"
                 gcs_destination_uri = f"gs://{job.output_bucket}/{job.output_base}"
 
-                result = OCRResult(
-                    input_pdf=job.input_pdf,
-                    output_base=f"{job.output_base}",
-                )
-
+                # Run OCR
                 self.ocr_processor.process_document(
                     gcs_source_uri, gcs_destination_uri, batch_size=1
                 )
+
+                # Extract text from results
+                result.original_ocr = ""
                 for uri in self.ocr_processor.list_result_uris(
                     job.output_bucket, job.output_base
                 ):
-                    result.original_ocr += (
-                        "\n"
-                        + self.ocr_processor.extract_ocr_text_from_result(
-                            bucket_name=job.output_bucket, extraction_prefix=uri
-                        )
+                    extraction = self.ocr_processor.extract_ocr_text_from_result(
+                        bucket_name=job.output_bucket, extraction_prefix=uri
                     )
-                result.improved_ocr = self.text_improver.improve_text(
-                    result.original_ocr
-                )
-                result.embedding = self.embedding_generator.generate_embeddings(
-                    [result.improved_ocr]
-                )[0]
-
-                # Update progress
-                with self._progress_lock:
-                    if attempt > 1:
-                        progress.retried_jobs += 1
-                    progress.completed_jobs += 1
-
-                logger.info(
-                    f"Successfully processed {job.input_pdf} on attempt {attempt}"
-                )
-                return ProcessingResult(success=True, result=result, attempt=attempt)
+                    result.original_ocr += "\n" + extraction
+                break
 
             except Exception as e:
-                error_msg = (
-                    f"Failed to process {job.input_pdf} (Attempt {attempt}): {str(e)}"
-                )
-                logger.warning(error_msg)
-
                 if attempt == self.retry_strategy.max_retries:
-                    with self._progress_lock:
-                        progress.failed_jobs += 1
-                    logger.error(f"All retry attempts failed for {job.input_pdf}")
+                    error_msg = (
+                        f"Failed OCR processing after {attempt} attempts: {str(e)}"
+                    )
+                    logger.error(error_msg)
                     return ProcessingResult(
                         success=False, error=error_msg, attempt=attempt
                     )
 
-                # Wait before retrying
                 sleep_time = self.retry_strategy.get_delay(attempt)
-                logger.info(f"Retrying {job.input_pdf} in {sleep_time:.2f} seconds")
+                logger.warning(
+                    f"OCR processing failed (Attempt {attempt}). Retrying in {sleep_time:.2f} seconds"
+                )
                 sleep(sleep_time)
                 attempt += 1
+
+        # Step 2: Text Improvement
+        # attempt = 1
+        while attempt <= self.retry_strategy.max_retries:
+            try:
+                result.improved_ocr = self.text_improver.improve_text(
+                    result.original_ocr
+                )
+                break
+            except Exception as e:
+                if attempt == self.retry_strategy.max_retries:
+                    error_msg = (
+                        f"Failed text improvement after {attempt} attempts: {str(e)}"
+                    )
+                    logger.error(error_msg)
+                    return ProcessingResult(
+                        success=False, error=error_msg, attempt=attempt
+                    )
+
+                sleep_time = self.retry_strategy.get_delay(attempt)
+                logger.warning(
+                    f"Text improvement failed (Attempt {attempt}). Retrying in {sleep_time:.2f} seconds"
+                )
+                sleep(sleep_time)
+                attempt += 1
+
+        # Step 3: Generate Embeddings
+        # attempt = 1
+        while attempt <= self.retry_strategy.max_retries:
+            try:
+                result.embedding = self.embedding_generator.generate_embeddings(
+                    [result.improved_ocr]
+                )[0]
+                break
+            except Exception as e:
+                if attempt == self.retry_strategy.max_retries:
+                    error_msg = f"Failed embedding generation after {attempt} attempts: {str(e)}"
+                    logger.error(error_msg)
+                    return ProcessingResult(
+                        success=False, error=error_msg, attempt=attempt
+                    )
+
+                sleep_time = self.retry_strategy.get_delay(attempt)
+                logger.warning(
+                    f"Embedding generation failed (Attempt {attempt}). Retrying in {sleep_time:.2f} seconds"
+                )
+                sleep(sleep_time)
+                attempt += 1
+
+        # Update progress
+        with self._progress_lock:
+            progress.completed_jobs += 1
+
+        logger.info(f"Successfully processed {job.input_pdf}")
+        return ProcessingResult(success=True, result=result, attempt=attempt)
 
     def batch_process_documents(
         self,
         jobs: List[ProcessingJob],
         save_results: bool = True,
-        output_prefix: Optional[str] = None,
         progress_callback: Optional[callable] = None,
     ) -> Tuple[List[OCRResult], ProcessingProgress]:
         """
@@ -255,7 +280,6 @@ class BrainProcessor:
         Args:
             jobs (List[ProcessingJob]): List of processing jobs
             save_results (bool): Whether to save results to storage
-            output_prefix (str, optional): Prefix for output files
             progress_callback (callable, optional): Function to call with progress updates
 
         Returns:
@@ -295,9 +319,9 @@ class BrainProcessor:
         progress.end_time = datetime.now()
 
         # Save results if requested
-        if save_results and results and output_prefix:
+        if save_results and results:
             try:
-                self.save_results(results, output_prefix)
+                self.save_results(results)
             except StorageError as e:
                 logger.error(f"Failed to save some results: {str(e)}")
 
@@ -318,7 +342,6 @@ class BrainProcessor:
     def save_results(
         self,
         results: List[OCRResult],
-        output_prefix: str,
         progress_callback: Optional[callable] = None,
     ) -> Tuple[bool, ProcessingProgress]:
         """
@@ -345,7 +368,7 @@ class BrainProcessor:
             """Helper function to save a single result with retry logic."""
             while retry_count < self.retry_strategy.max_retries:
                 try:
-                    output_file = f"{output_prefix}_{index}.json"
+                    output_file = f"handwritten-embeddings/{result.input_pdf.replace('.pdf', '')}.json"
                     result_dict = {
                         "input_pdf": result.input_pdf,
                         "output_base": result.output_base,
@@ -357,7 +380,7 @@ class BrainProcessor:
                     self.storage_manager.upload_data(
                         json.dumps(result_dict),
                         output_file,
-                        self.storage_manager.vs_bucket,
+                        "my-brain-vector-store",
                     )
 
                     with progress_lock:
