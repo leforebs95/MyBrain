@@ -1,9 +1,11 @@
-from typing import List
+from typing import List, Optional
 from google.cloud import aiplatform, aiplatform_v1
 from google.cloud import exceptions as google_exceptions
 import uuid
 import base64
 import logging
+
+from ulid import ULID
 
 from errors import VectorStoreError
 from utils import retry_with_backoff
@@ -69,6 +71,119 @@ class VectorStoreManager:
             raise VectorStoreError(f"Failed to get index: {str(e)}")
 
     @retry_with_backoff()
+    def get_index_endpoint(
+        self, endpoint_id: str
+    ) -> aiplatform.MatchingEngineIndexEndpoint:
+        """
+        Retrieves a vector store index endpoint.
+
+        Args:
+            endpoint_id (str): ID of the endpoint to retrieve
+
+        Returns:
+            aiplatform.MatchingEngineIndexEndpoint: Retrieved endpoint
+
+        Raises:
+            VectorStoreError: If endpoint retrieval fails
+        """
+        try:
+            endpoint = aiplatform.MatchingEngineIndexEndpoint(endpoint_id)
+            logger.info(f"Retrieved endpoint {endpoint_id}")
+            return endpoint
+        except google_exceptions.NotFound as e:
+            logger.error(f"Endpoint {endpoint_id} not found: {str(e)}")
+            raise VectorStoreError(f"Vector endpoint {endpoint_id} not found")
+        except Exception as e:
+            logger.error(f"Failed to get endpoint: {str(e)}")
+            raise VectorStoreError(f"Failed to get endpoint: {str(e)}")
+
+    @retry_with_backoff()
+    def create_index_deployment(
+        self,
+        index_id: str,
+        endpoint_id: str,
+        deployed_index_id: Optional[str] = None,
+        min_replica_count: int = 1,
+        max_replica_count: int = 1,
+    ) -> aiplatform.MatchingEngineIndexEndpoint:
+        """
+        Creates a new deployment of a vector index to an endpoint.
+
+        Args:
+            index_id (str): ID of the index to deploy
+            endpoint_id (str): ID of the endpoint to deploy to
+            deployed_index_id (str, optional): Custom ID for the deployment
+            min_replica_count (int): Minimum number of replicas
+            max_replica_count (int): Maximum number of replicas
+
+        Returns:
+            aiplatform.MatchingEngineIndexEndpoint: Updated endpoint
+
+        Raises:
+            VectorStoreError: If deployment creation fails
+        """
+        try:
+            # Get the index and endpoint
+            index = self.get_index(index_id)
+            endpoint = self.get_index_endpoint(endpoint_id)
+
+            # Generate deployment ID if not provided
+            if not deployed_index_id:
+                deployed_index_id = str(ULID())
+
+            # Deploy the index
+            endpoint = endpoint.deploy_index(
+                index=index,
+                deployed_index_id=deployed_index_id,
+                min_replica_count=min_replica_count,
+                max_replica_count=max_replica_count,
+            )
+
+            logger.info(
+                f"Successfully deployed index {index_id} to endpoint {endpoint_id} "
+                f"with deployment ID {deployed_index_id}"
+            )
+            return endpoint
+
+        except Exception as e:
+            logger.error(f"Failed to create index deployment: {str(e)}")
+            raise VectorStoreError(f"Failed to create index deployment: {str(e)}")
+
+    @retry_with_backoff()
+    def delete_index_deployment(
+        self, endpoint_id: str, deployed_index_id: str
+    ) -> aiplatform.MatchingEngineIndexEndpoint:
+        """
+        Deletes a deployment from an endpoint.
+
+        Args:
+            endpoint_id (str): ID of the endpoint containing the deployment
+            deployed_index_id (str): ID of the deployment to delete
+
+        Returns:
+            aiplatform.MatchingEngineIndexEndpoint: Updated endpoint
+
+        Raises:
+            VectorStoreError: If deployment deletion fails
+        """
+        try:
+            # Get the endpoint
+            endpoint = self.get_index_endpoint(endpoint_id)
+
+            # Undeploy the index
+            endpoint = endpoint.undeploy_index(deployed_index_id=deployed_index_id)
+
+            logger.info(
+                f"Successfully deleted deployment {deployed_index_id} "
+                f"from endpoint {endpoint_id}"
+            )
+            return endpoint
+
+        except Exception as e:
+            logger.error(f"Failed to delete index deployment: {str(e)}")
+            raise VectorStoreError(f"Failed to delete index deployment: {str(e)}")
+
+    @retry_with_backoff()
     def find_neighbors(
         self,
         api_endpoint: str,
@@ -119,3 +234,36 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Failed to find neighbors: {str(e)}")
             raise VectorStoreError(f"Failed to find neighbors: {str(e)}")
+
+    def list_deployments(self, endpoint_id: str) -> List[dict]:
+        """
+        Lists all deployments on an endpoint.
+
+        Args:
+            endpoint_id (str): ID of the endpoint to list deployments from
+
+        Returns:
+            List[dict]: List of deployment information
+
+        Raises:
+            VectorStoreError: If listing deployments fails
+        """
+        try:
+            endpoint = self.get_index_endpoint(endpoint_id)
+            deployments = [
+                {
+                    "deployed_index_id": d.deployed_index_id,
+                    "index_resource_name": d.index,
+                    "min_replica_count": d.min_replica_count,
+                    "max_replica_count": d.max_replica_count,
+                }
+                for d in endpoint.deployed_indexes
+            ]
+            logger.info(
+                f"Listed {len(deployments)} deployments on endpoint {endpoint_id}"
+            )
+            return deployments
+
+        except Exception as e:
+            logger.error(f"Failed to list deployments: {str(e)}")
+            raise VectorStoreError(f"Failed to list deployments: {str(e)}")
