@@ -15,6 +15,7 @@ from embedding_generator import EmbeddingGenerator
 from vector_store_manager import VectorStoreManager
 from errors import BrainProcessingError, StorageError
 from utils import RetryStrategy
+from ulid import ULID
 
 # Configure logging
 logging.basicConfig(
@@ -321,7 +322,7 @@ class BrainProcessor:
         # Save results if requested
         if save_results and results:
             try:
-                self.save_results(results)
+                self.store_embeddings(results)
             except StorageError as e:
                 logger.error(f"Failed to save some results: {str(e)}")
 
@@ -339,7 +340,7 @@ class BrainProcessor:
 
         return results, progress
 
-    def save_results(
+    def store_embeddings(
         self,
         results: List[OCRResult],
         progress_callback: Optional[callable] = None,
@@ -370,6 +371,7 @@ class BrainProcessor:
                 try:
                     output_file = f"handwritten-embeddings/{result.input_pdf.replace('.pdf', '')}.json"
                     result_dict = {
+                        "id": str(ULID()),
                         "input_pdf": result.input_pdf,
                         "output_base": result.output_base,
                         "original_ocr": result.original_ocr,
