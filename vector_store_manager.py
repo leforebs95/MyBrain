@@ -43,18 +43,6 @@ class VectorStoreManager:
                 f"Vector Store Manager initialization failed: {str(e)}"
             )
 
-    @staticmethod
-    def generate_deployment_id() -> str:
-        """
-        Generates a shortened UUID for deployment IDs.
-
-        Returns:
-            str: Shortened UUID
-        """
-        uuid_str = str(uuid.uuid4())
-        uuid_bytes = uuid.UUID(uuid_str).bytes
-        return base64.urlsafe_b64encode(uuid_bytes).rstrip(b"=").decode("ascii")
-
     @retry_with_backoff()
     def get_index(self, index_id: str) -> aiplatform.MatchingEngineIndex:
         """

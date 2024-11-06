@@ -26,3 +26,9 @@ class VectorStoreError(BrainProcessingError):
     """Raised when vector store operations fail."""
 
     pass
+
+
+class DatabaseError(BrainProcessingError):
+    """Raised when database operations fail."""
+
+    pass
