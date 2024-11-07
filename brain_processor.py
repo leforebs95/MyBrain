@@ -38,7 +38,7 @@ class OCRResult:
         embedding (List[float], optional): Vector embedding of the improved text
     """
 
-    id: str = field(default_factory=lambda: str(ULID()))
+    id: str
     input_pdf: str
     output_base: str
     original_ocr: Optional[str] = None
@@ -176,7 +176,8 @@ class BrainProcessor:
         """
         Process a document with targeted retry logic for major steps.
         """
-        result = OCRResult(input_pdf=job.input_pdf, output_base=job.output_base)
+        id = job.input_pdf.split("/")[-1].replace(".pdf", "")
+        result = OCRResult(id=id, input_pdf=job.input_pdf, output_base=job.output_base)
 
         # Step 1: OCR Processing and Text Extraction
         attempt = 1
@@ -374,20 +375,16 @@ class BrainProcessor:
             while retry_count < self.retry_strategy.max_retries:
                 try:
                     output_file = f"handwritten-embeddings/{result.input_pdf.replace('.pdf', '')}.json"
-                    result_dict = {
-                        "id": str(ULID()),
-                        "input_pdf": result.input_pdf,
-                        "output_base": result.output_base,
-                        "original_ocr": result.original_ocr,
-                        "improved_ocr": result.improved_ocr,
-                        "embedding": result.embedding,
-                    }
+                    result_dict = result.__dict__
+                    vector_dict = {"id": result.id, "embedding": result.embedding}
 
                     self.storage_manager.upload_data(
-                        json.dumps(result_dict),
+                        json.dumps(vector_dict),
                         output_file,
                         "my-brain-vector-store",
                     )
+
+                    self.database_manager.store_document(result_dict)
 
                     with progress_lock:
                         if retry_count > 0:
