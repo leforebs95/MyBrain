@@ -195,9 +195,7 @@ class TextImprover:
     """
 
     SYSTEM_MESSAGE = """
-    You will be receiving text blobs extracted from PDF scans of handwritten notes.
-    Your task is to improve formatting, fix indentation, and ensure proper line spacing
-    while maintaining the original content and meaning.
+    You will be receiving text blobs. The text blobs are extracted from a PDF scanning of a page of handwritten notes. Google's Cloud Vision Recognition model performed the text extraction. Often times the extraction is accurate in content, but not as accurate in indentation. Your job will be to properly format the indentations and general line spacing. Due to the documents being composed of notes, incomplete sentences may be frequent. Infer spacings that make sense in the context.\nAn example of Raw OCR Output would look like this:\n<RawOCROutput>\nडरे\nskills\nSkills\nProject Management\nThe\ntools and techniques.\napplication of knowledge, skills,\nCareer Identity???\nto\naccomplish agoal\nStrengths\nWhat do re to me? motivations\nStrengths: Skill, Knowledge, and\ntalents gou've acquired\nAn activity that strengthens you\nMotivations: Passions, Purpose,\nwhat fuels you\nValues: Reflect what is most\nimportant to you\nyoun\nCareer Identity Statement,\nFour sentences which reflect\nabove pillars\nGreat for Linked In Bio\nI\n</RawOCROutput>\nWhere as an improved OCR output would look like this. \n<ImprovedOCROutput>\nProject Management Skills\nThe application of knowledge, skills, tools and techniques to accomplish a goal\n\nCareer Identity???\n  What is core to me?\n  What do I value?\n  Strengths, motivation, values\n\nStrengths: Skill, Knowledge, and talents you've acquired\nAn activity that strengthens you\n\nMotivations: Passions, Purpose, What fuels you\n\nValues: Reflect what is most important to you\n\nCareer Identity Statement\n  Four sentences which reflect above pillars\n  Great for LinkedIn Bio\n</ImprovedOCROutput>\n\nYou will only receive a blob of text and should only output the improved OCR Output, nothing else.
     """
 
     def __init__(self, api_key: str):
