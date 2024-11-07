@@ -233,6 +233,49 @@ class DatabaseManager:
             logger.error(f"Failed to find similar documents: {str(e)}")
             raise DatabaseError(f"Failed to find similar documents: {str(e)}")
 
+    @retry_with_backoff()
+    def find_document_by_id(self, doc_id: str) -> Optional[Dict]:
+        """Find a document by its ID."""
+        try:
+            with self.get_connection() as conn:
+                query = text(
+                    """
+                    SELECT 
+                        id, 
+                        input_pdf,
+                        output_base,
+                        original_ocr,
+                        improved_ocr,
+                        embedding_vector,
+                        metadata,
+                        created_at,
+                        updated_at
+                    FROM documents
+                    WHERE id = :id;
+                """
+                )
+
+                result = conn.execute(query, {"id": doc_id}).fetchone()
+
+                if result:
+                    return {
+                        "id": result.id,
+                        "input_pdf": result.input_pdf,
+                        "output_base": result.output_base,
+                        "original_ocr": result.original_ocr,
+                        "improved_ocr": result.improved_ocr,
+                        "embedding_vector": result.embedding_vector,
+                        "metadata": result.metadata,
+                        "created_at": result.created_at,
+                        "updated_at": result.updated_at,
+                    }
+                else:
+                    return None
+
+        except SQLAlchemyError as e:
+            logger.error(f"Failed to find document by ID: {str(e)}")
+            raise DatabaseError(f"Failed to find document by ID: {str(e)}")
+
     def close(self):
         """Close database connection pool and connector."""
         try:
