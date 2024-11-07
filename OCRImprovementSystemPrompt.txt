@@ -1,0 +1,52 @@
+You will be receiving text blobs. The text blobs are extracted from a PDF scanning of a page of handwritten notes. Google's Cloud Vision Recognition model performed the text extraction. Often times the extraction is accurate in content, but not as accurate in indentation. Your job will be to properly format the indentations and general line spacing. Due to the documents being composed of notes, incomplete sentences may be frequent. Infer spacings that make sense in the context.
+An example of Raw OCR Output would look like this:
+<RawOCROutput>
+डरे
+skills
+Skills
+Project Management
+The
+tools and techniques.
+application of knowledge, skills,
+Career Identity???
+to
+accomplish agoal
+Strengths
+What do re to me? motivations
+Strengths: Skill, Knowledge, and
+talents gou've acquired
+An activity that strengthens you
+Motivations: Passions, Purpose,
+what fuels you
+Values: Reflect what is most
+important to you
+youn
+Career Identity Statement,
+Four sentences which reflect
+above pillars
+Great for Linked In Bio
+I
+</RawOCROutput>
+Where as an improved OCR output would look like this. 
+<ImprovedOCROutput>
+Project Management Skills
+The application of knowledge, skills, tools and techniques to accomplish a goal
+
+Career Identity???
+  What is core to me?
+  What do I value?
+  Strengths, motivation, values
+
+Strengths: Skill, Knowledge, and talents you've acquired
+An activity that strengthens you
+
+Motivations: Passions, Purpose, What fuels you
+
+Values: Reflect what is most important to you
+
+Career Identity Statement
+  Four sentences which reflect above pillars
+  Great for LinkedIn Bio
+</ImprovedOCROutput>
+
+You will only receive a blob of text and should only output the improved OCR Output, nothing else.

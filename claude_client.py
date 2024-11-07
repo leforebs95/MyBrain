@@ -194,9 +194,7 @@ class TextImprover:
     for a specific text processing task.
     """
 
-    SYSTEM_MESSAGE = """
-    You will be receiving text blobs. The text blobs are extracted from a PDF scanning of a page of handwritten notes. Google's Cloud Vision Recognition model performed the text extraction. Often times the extraction is accurate in content, but not as accurate in indentation. Your job will be to properly format the indentations and general line spacing. Due to the documents being composed of notes, incomplete sentences may be frequent. Infer spacings that make sense in the context.\nAn example of Raw OCR Output would look like this:\n<RawOCROutput>\nडरे\nskills\nSkills\nProject Management\nThe\ntools and techniques.\napplication of knowledge, skills,\nCareer Identity???\nto\naccomplish agoal\nStrengths\nWhat do re to me? motivations\nStrengths: Skill, Knowledge, and\ntalents gou've acquired\nAn activity that strengthens you\nMotivations: Passions, Purpose,\nwhat fuels you\nValues: Reflect what is most\nimportant to you\nyoun\nCareer Identity Statement,\nFour sentences which reflect\nabove pillars\nGreat for Linked In Bio\nI\n</RawOCROutput>\nWhere as an improved OCR output would look like this. \n<ImprovedOCROutput>\nProject Management Skills\nThe application of knowledge, skills, tools and techniques to accomplish a goal\n\nCareer Identity???\n  What is core to me?\n  What do I value?\n  Strengths, motivation, values\n\nStrengths: Skill, Knowledge, and talents you've acquired\nAn activity that strengthens you\n\nMotivations: Passions, Purpose, What fuels you\n\nValues: Reflect what is most important to you\n\nCareer Identity Statement\n  Four sentences which reflect above pillars\n  Great for LinkedIn Bio\n</ImprovedOCROutput>\n\nYou will only receive a blob of text and should only output the improved OCR Output, nothing else.
-    """
+    SYSTEM_MESSAGE = "Please improve the following text."
 
     def __init__(self, api_key: str):
         """
@@ -206,6 +204,8 @@ class TextImprover:
             api_key (str): Anthropic API key
         """
         self.claude_client = ClaudeClient(api_key)
+        with open("OCRImprovementSystemPrompt.txt", "r") as file:
+            self.SYSTEM_MESSAGE = file.read()
 
     def improve_text(self, raw_text: str) -> str:
         """
@@ -228,3 +228,185 @@ class TextImprover:
         except BrainProcessingError as e:
             logger.error(f"Text improvement failed: {str(e)}")
             raise BrainProcessingError(f"Text improvement failed: {str(e)}")
+
+
+@dataclass
+class Message:
+    """Represents a message in the conversation."""
+
+    role: str
+    content: str
+    timestamp: datetime = None
+
+
+@dataclass
+class ContextWindow:
+    """Represents the context window for RAG."""
+
+    text_chunks: List[str]
+    total_tokens: int
+    max_tokens: int = 4000  # Default max tokens for context
+
+    def has_space(self, new_chunk_tokens: int) -> bool:
+        """Check if new chunk can fit in context window."""
+        return (self.total_tokens + new_chunk_tokens) <= self.max_tokens
+
+    def add_chunk(self, chunk: str, chunk_tokens: int):
+        """Add a new chunk to context window if space available."""
+        if self.has_space(chunk_tokens):
+            self.text_chunks.append(chunk)
+            self.total_tokens += chunk_tokens
+            return True
+        return False
+
+
+class ConversationManager:
+    """Manages conversation history and context."""
+
+    def __init__(self, max_history: int = 10):
+        self.history: List[Message] = []
+        self.max_history = max_history
+
+    def add_message(self, role: str, content: str):
+        """Add a message to conversation history."""
+        message = Message(role=role, content=content, timestamp=datetime.now())
+        self.history.append(message)
+
+        # Trim history if needed
+        if len(self.history) > self.max_history:
+            self.history = self.history[-self.max_history :]
+
+    def get_formatted_history(self) -> List[Dict[str, str]]:
+        """Get history formatted for Claude API."""
+        return [{"role": msg.role, "content": msg.content} for msg in self.history]
+
+
+class RAGClaudeClient:
+    """
+    Enhanced Claude client with RAG support.
+
+    This client manages conversations, handles context windows,
+    and provides RAG-specific functionality.
+    """
+
+    DEFAULT_SYSTEM_MESSAGE = "Please provide an answer to the following question."
+
+    def __init__(
+        self,
+        api_key: str,
+        vector_store,  # Reference to vector store for similarity search
+        default_model: str = "claude-3-haiku-20240307",
+        max_tokens: int = 1000,
+        temperature: float = 0,
+    ):
+        try:
+            self.client = anthropic.Anthropic(api_key=api_key)
+            self.vector_store = vector_store
+            self.default_model = default_model
+            self.max_tokens = max_tokens
+            self.temperature = temperature
+            self.conversation = ConversationManager()
+            self.context_window = ContextWindow([], 0)
+            with open("ConversationSystemPrompt.txt", "r") as file:
+                self.DEFAULT_SYSTEM_MESSAGE = file.read()
+            logger.info("Initialized RAG Claude client")
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG Claude client: {str(e)}")
+            raise BrainProcessingError(
+                f"RAG Claude client initialization failed: {str(e)}"
+            )
+
+    def _get_relevant_context(self, query: str, k: int = 3) -> List[str]:
+        """
+        Retrieve relevant context chunks based on query similarity.
+
+        Args:
+            query: User's question
+            k: Number of similar chunks to retrieve
+
+        Returns:
+            List of relevant text chunks
+        """
+        try:
+            results = self.vector_store.find_similar_documents(query, limit=k)
+            return [r["improved_ocr"] for r in results]
+        except Exception as e:
+            logger.error(f"Failed to retrieve context: {str(e)}")
+            raise BrainProcessingError(f"Context retrieval failed: {str(e)}")
+
+    def _build_prompt(self, query: str, context_chunks: List[str]) -> str:
+        """
+        Build a prompt combining query and context.
+
+        Args:
+            query: User's question
+            context_chunks: Retrieved relevant context
+
+        Returns:
+            Formatted prompt string
+        """
+        context_str = "\n\n".join(context_chunks)
+        return f"""Context information is below.
+---------------------
+{context_str}
+---------------------
+
+Given the context information, please answer the following question:
+{query}
+
+Remember to only use information from the provided context. If the context doesn't 
+contain enough information to fully answer the question, please say so."""
+
+    @retry_with_backoff()
+    def chat(
+        self,
+        query: str,
+        system_message: Optional[str] = None,
+        refresh_context: bool = True,
+    ) -> str:
+        """
+        Process a chat message with RAG support.
+
+        Args:
+            query: User's question
+            system_message: Optional custom system message
+            refresh_context: Whether to fetch new context or use existing
+
+        Returns:
+            Assistant's response
+        """
+        try:
+            # Get fresh context if requested
+            if refresh_context:
+                context_chunks = self._get_relevant_context(query)
+                prompt = self._build_prompt(query, context_chunks)
+            else:
+                prompt = query
+
+            # Add user message to conversation
+            self.conversation.add_message("user", prompt)
+
+            # Get response from Claude
+            message = self.client.messages.create(
+                model=self.default_model,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                system=system_message or self.DEFAULT_SYSTEM_MESSAGE,
+                messages=self.conversation.get_formatted_history(),
+            )
+
+            response = "\n".join([block.text for block in message.content])
+
+            # Add assistant response to conversation
+            self.conversation.add_message("assistant", response)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Chat processing failed: {str(e)}")
+            raise BrainProcessingError(f"Chat processing failed: {str(e)}")
+
+    def clear_conversation(self):
+        """Reset the conversation history."""
+        self.conversation = ConversationManager()
+        logger.info("Cleared conversation history")
