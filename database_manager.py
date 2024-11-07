@@ -1,10 +1,14 @@
 from typing import Dict, List, Optional
-import psycopg2
-from psycopg2.extras import Json
 import logging
 from dataclasses import dataclass
+from contextlib import contextmanager
 
-from brain_processor import OCRResult
+import sqlalchemy
+from sqlalchemy import text
+from google.cloud.sql.connector import Connector
+from sqlalchemy.pool import QueuePool
+from sqlalchemy.exc import SQLAlchemyError
+
 from errors import DatabaseError
 from utils import retry_with_backoff
 
@@ -17,46 +21,79 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DatabaseConfig:
-    host: str
+    instance_connection_name: str  # e.g., "project:region:instance"
     database: str
     user: str
     password: str
-    port: int = 5432
+    pool_size: int = 5
+    max_overflow: int = 2
 
 
 class DatabaseManager:
     """
     Manages PostgreSQL database operations with support for vector storage.
-
-    This class handles both traditional data storage and vector operations,
-    serving as a complement to the Vector Store Manager.
+    Uses Cloud SQL Connector and SQLAlchemy connection pooling.
     """
 
     def __init__(self, config: DatabaseConfig):
-        """Initialize database connection."""
+        """Initialize database connection pool."""
         try:
-            self.conn = psycopg2.connect(
-                host=config.host,
-                database=config.database,
-                user=config.user,
-                password=config.password,
-                port=config.port,
+            self.config = config
+            self.connector = Connector()
+
+            # Initialize the connection pool
+            self.engine = sqlalchemy.create_engine(
+                "postgresql+pg8000://",
+                creator=self._get_connection,
+                poolclass=QueuePool,
+                pool_size=config.pool_size,
+                max_overflow=config.max_overflow,
             )
-            self._init_database()
-            logger.info("Initialized DatabaseManager")
+
+            # Test connection and initialize database
+            with self.get_connection() as conn:
+                self._init_database(conn)
+
+            logger.info("Initialized DatabaseManager with connection pool")
         except Exception as e:
             logger.error(f"Failed to initialize DatabaseManager: {str(e)}")
             raise DatabaseError(f"Database initialization failed: {str(e)}")
 
-    def _init_database(self):
+    def _get_connection(self):
+        """Create a new database connection using Cloud SQL Connector."""
+        try:
+            conn = self.connector.connect(
+                self.config.instance_connection_name,
+                "pg8000",
+                user=self.config.user,
+                password=self.config.password,
+                db=self.config.database,
+            )
+            return conn
+        except Exception as e:
+            logger.error(f"Failed to create database connection: {str(e)}")
+            raise DatabaseError(f"Connection creation failed: {str(e)}")
+
+    @contextmanager
+    def get_connection(self):
+        """Context manager for database connections."""
+        try:
+            with self.engine.connect() as connection:
+                yield connection
+        except SQLAlchemyError as e:
+            logger.error(f"Database connection error: {str(e)}")
+            raise DatabaseError(f"Database connection error: {str(e)}")
+
+    def _init_database(self, connection):
         """Initialize database schema and extensions."""
-        with self.conn.cursor() as cur:
+        try:
             # Enable vector extension
-            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
 
             # Create documents table
-            cur.execute(
-                """
+            connection.execute(
+                text(
+                    """
                 CREATE TABLE IF NOT EXISTS documents (
                     id TEXT PRIMARY KEY,
                     input_pdf TEXT NOT NULL,
@@ -69,75 +106,91 @@ class DatabaseManager:
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """
+                )
             )
 
             # Create updated_at trigger
-            cur.execute(
-                """
-                CREATE OR REPLACE FUNCTION update_updated_at_column()
+            connection.execute(
+                text(
+                    """
+                CREATE OR REPLACE FUNCTION update_timestamp()
                 RETURNS TRIGGER AS $$
                 BEGIN
-                    NEW.updated_at = CURRENT_TIMESTAMP;
+                    NEW.updated_at = NOW();
                     RETURN NEW;
                 END;
-                $$ language 'plpgsql';
-            """
+                $$ LANGUAGE plpgsql;
+                """
+                )
             )
 
-            cur.execute(
-                """
+            connection.execute(
+                text(
+                    """
                 DROP TRIGGER IF EXISTS update_documents_updated_at ON documents;
                 CREATE TRIGGER update_documents_updated_at
                     BEFORE UPDATE ON documents
                     FOR EACH ROW
-                    EXECUTE FUNCTION update_updated_at_column();
+                    EXECUTE PROCEDURE update_timestamp();
             """
+                )
             )
 
-            self.conn.commit()
+            connection.commit()
+        except SQLAlchemyError as e:
+            logger.error(f"Failed to initialize database: {str(e)}")
+            raise DatabaseError(f"Database initialization failed: {str(e)}")
+
+    def _format_vector(self, embedding: List[float]) -> str:
+        """Format a vector for pgvector storage."""
+        if embedding is None:
+            return None
+        return f"[{','.join(str(x) for x in embedding)}]"
 
     @retry_with_backoff()
-    def store_document(self, doc_data: OCRResult) -> str:
-        """
-        Store document data in PostgreSQL while simultaneously preparing JSONL for Vertex.AI.
-
-        Args:
-            doc_data: Dictionary containing document data
-
-        Returns:
-            str: Document ID
-        """
+    def store_document(self, doc_data: Dict) -> str:
+        """Store document data in PostgreSQL."""
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
+            logger.info(f"Storing document with data: {doc_data.keys()}")
+            with self.get_connection() as conn:
+                query = text(
                     """
                     INSERT INTO documents (
-                        id, input_pdf, output_base, original_ocr, 
-                        improved_ocr, embedding_vector, metadata
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET
-                        input_pdf = EXCLUDED.input_pdf,
-                        output_base = EXCLUDED.output_base,
-                        original_ocr = EXCLUDED.original_ocr,
-                        improved_ocr = EXCLUDED.improved_ocr,
-                        embedding_vector = EXCLUDED.embedding_vector,
-                        metadata = EXCLUDED.metadata,
-                        updated_at = CURRENT_TIMESTAMP;
-                """,
-                    (
-                        doc_data.id,
-                        doc_data.input_pdf,
-                        doc_data.output_base,
-                        doc_data.original_ocr,
-                        doc_data.improved_ocr,
-                        doc_data.embedding,
-                        Json(doc_data.metadata, {}),
-                    ),
+                    id, input_pdf, output_base, original_ocr, 
+                    improved_ocr, embedding_vector, metadata
+                ) VALUES (
+                    :id, :input_pdf, :output_base, :original_ocr, 
+                    :improved_ocr, :embedding_vector, :metadata
                 )
-                self.conn.commit()
-                return doc_data["id"]
-        except Exception as e:
-            self.conn.rollback()
+                ON CONFLICT (id) DO UPDATE SET
+                    input_pdf = EXCLUDED.input_pdf,
+                    output_base = EXCLUDED.output_base,
+                    original_ocr = EXCLUDED.original_ocr,
+                    improved_ocr = EXCLUDED.improved_ocr,
+                    embedding_vector = EXCLUDED.embedding_vector
+                RETURNING id;
+                """
+                )
+
+                result = conn.execute(
+                    query,
+                    {
+                        "id": doc_data["id"],
+                        "input_pdf": doc_data["input_pdf"],
+                        "output_base": doc_data["output_base"],
+                        "original_ocr": doc_data.get("original_ocr"),
+                        "improved_ocr": doc_data.get("improved_ocr"),
+                        "embedding_vector": self._format_vector(
+                            doc_data.get("embedding")
+                        ),
+                        "metadata": doc_data.get("metadata", {}),
+                    },
+                )
+
+                conn.commit()
+                return result.scalar_one()
+
+        except SQLAlchemyError as e:
             logger.error(f"Failed to store document: {str(e)}")
             raise DatabaseError(f"Failed to store document: {str(e)}")
 
@@ -145,48 +198,46 @@ class DatabaseManager:
     def find_similar_documents(
         self, embedding: List[float], limit: int = 10
     ) -> List[Dict]:
-        """
-        Find similar documents using vector similarity search.
-
-        Args:
-            embedding: Query vector
-            limit: Maximum number of results
-
-        Returns:
-            List[Dict]: Similar documents with similarity scores
-        """
+        """Find similar documents using vector similarity search."""
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
+            with self.get_connection() as conn:
+                query = text(
                     """
                     SELECT 
                         id, 
                         input_pdf,
                         improved_ocr,
-                        1 - (embedding_vector <=> %s) as similarity
+                        metadata,
+                        1 - (embedding_vector <=> :embedding) as similarity
                     FROM documents
                     WHERE embedding_vector IS NOT NULL
-                    ORDER BY embedding_vector <=> %s
-                    LIMIT %s;
-                """,
-                    (embedding, embedding, limit),
+                    ORDER BY embedding_vector <=> :embedding
+                    LIMIT :limit;
+                """
                 )
 
-                results = []
-                for row in cur.fetchall():
-                    results.append(
-                        {
-                            "id": row[0],
-                            "input_pdf": row[1],
-                            "improved_ocr": row[2],
-                            "similarity": float(row[3]),
-                        }
-                    )
-                return results
-        except Exception as e:
+                result = conn.execute(query, {"embedding": embedding, "limit": limit})
+
+                return [
+                    {
+                        "id": row.id,
+                        "input_pdf": row.input_pdf,
+                        "improved_ocr": row.improved_ocr,
+                        "metadata": row.metadata,
+                        "similarity": float(row.similarity),
+                    }
+                    for row in result
+                ]
+
+        except SQLAlchemyError as e:
             logger.error(f"Failed to find similar documents: {str(e)}")
             raise DatabaseError(f"Failed to find similar documents: {str(e)}")
 
     def close(self):
-        """Close database connection."""
-        self.conn.close()
+        """Close database connection pool and connector."""
+        try:
+            self.engine.dispose()
+            self.connector.close()
+            logger.info("Closed database connections")
+        except Exception as e:
+            logger.error(f"Error closing database connections: {str(e)}")
