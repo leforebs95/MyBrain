@@ -1,10 +1,14 @@
+from datetime import datetime
 import logging
 from typing import Dict, List, Optional, Union, Any
 import anthropic
 from dataclasses import dataclass
 
+from database_manager import DatabaseManager
+from embedding_generator import EmbeddingGenerator
 from errors import BrainProcessingError
 from utils import retry_with_backoff
+from vector_store_manager import VectorStoreManager
 
 # Configure logging
 logging.basicConfig(
@@ -294,7 +298,9 @@ class RAGClaudeClient:
     def __init__(
         self,
         api_key: str,
-        vector_store,  # Reference to vector store for similarity search
+        vector_store: VectorStoreManager,  # Reference to vector store for similarity search
+        embedding_generator: EmbeddingGenerator,  # Reference to embedding generator
+        database_manager: DatabaseManager,  # Reference to database manager
         default_model: str = "claude-3-haiku-20240307",
         max_tokens: int = 1000,
         temperature: float = 0,
@@ -302,6 +308,8 @@ class RAGClaudeClient:
         try:
             self.client = anthropic.Anthropic(api_key=api_key)
             self.vector_store = vector_store
+            self.embedding_generator = embedding_generator
+            self.database_manager = database_manager
             self.default_model = default_model
             self.max_tokens = max_tokens
             self.temperature = temperature
@@ -328,11 +336,34 @@ class RAGClaudeClient:
             List of relevant text chunks
         """
         try:
-            results = self.vector_store.find_similar_documents(query, limit=k)
-            return [r["improved_ocr"] for r in results]
+            prompt_embeddings = self.embedding_generator.generate_embeddings(
+                [query], input_type="query"
+            )
+            neighbors = self.vector_store.find_neighbors(
+                prompt_embeddings[0],
+                "8859614007967875072",
+                "test_data_deployment_01JC3M86E10WXXH27P7F980ETB",
+                k,
+            )
+            nn_ids = [
+                neighbor.datapoint.datapoint_id
+                for near_neighbors in neighbors.nearest_neighbors
+                for neighbor in near_neighbors.neighbors
+            ]
+            context = []
+            for nn_id in nn_ids:
+                document = self.database_manager.find_document_by_id(nn_id)
+                if document and "improved_ocr" in document:
+                    context.append(document["improved_ocr"])
+                else:
+                    logger.warning(
+                        f"Document with ID {nn_id} does not contain 'improved_ocr'"
+                    )
+            logger.info("Successfully retrieved relevant context")
+            return context
         except Exception as e:
-            logger.error(f"Failed to retrieve context: {str(e)}")
-            raise BrainProcessingError(f"Context retrieval failed: {str(e)}")
+            logger.error(f"Failed to retrieve relevant context: {str(e)}")
+            raise BrainProcessingError(f"Failed to retrieve relevant context: {str(e)}")
 
     def _build_prompt(self, query: str, context_chunks: List[str]) -> str:
         """
