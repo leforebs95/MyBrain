@@ -53,6 +53,11 @@ class EmbeddingGenerator:
         Raises:
             EmbeddingError: If embedding generation fails
         """
+        if input_type not in ["query", "document"]:
+            logger.error(f"Invalid input_type: {input_type}")
+            raise ValueError(
+                f"Invalid input_type: {input_type}. Must be 'query' or 'document'."
+            )
         try:
             result = self.client.embed(texts, model=model, input_type=input_type)
             logger.info(f"Generated embeddings for {len(texts)} texts")
