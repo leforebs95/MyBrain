@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import List, Optional
 from google.cloud import aiplatform, aiplatform_v1
 from google.cloud import exceptions as google_exceptions
@@ -17,6 +18,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class VectorStoreConfig:
+    project_id: str
+    api_endpoint: str
+    location: str
+
+
 class VectorStoreManager:
     """
     Manages vector store operations using Google Cloud Vertex AI.
@@ -26,7 +34,7 @@ class VectorStoreManager:
         location (str): Google Cloud region
     """
 
-    def __init__(self, project_id: str, location: str = "us-central1"):
+    def __init__(self, config: VectorStoreConfig):
         """
         Initialize the vector store manager.
 
@@ -35,10 +43,13 @@ class VectorStoreManager:
             location (str): Google Cloud region
         """
         try:
-            self.project_id = project_id
-            self.location = location
-            aiplatform.init(project=project_id, location=location)
-            logger.info(f"Initialized Vector Store Manager for project {project_id}")
+            self.project_id = config.project_id
+            self.location = config.location
+            self.api_endpoint = config.api_endpoint
+            aiplatform.init(project=config.project_id, location=config.location)
+            logger.info(
+                f"Initialized Vector Store Manager for project {config.project_id}"
+            )
         except Exception as e:
             logger.error(f"Failed to initialize Vector Store Manager: {str(e)}")
             raise VectorStoreError(
@@ -69,6 +80,43 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Failed to get index: {str(e)}")
             raise VectorStoreError(f"Failed to get index: {str(e)}")
+
+    @retry_with_backoff()
+    def update_index(
+        self,
+        index_id: str,
+        bucket: str,
+        prefix: str,
+        is_complete_overwrite: Optional[bool] = None,
+    ) -> aiplatform.MatchingEngineIndex:
+        """
+        Updates an existing vector store index with new data from a GCS bucket.
+
+        Args:
+            index_id (str): ID of the index to update
+            bucket (str): GCS bucket containing the new data
+            prefix (str): Prefix of the new data files in the GCS bucket
+
+        Returns:
+            aiplatform.MatchingEngineIndex: Updated index
+
+        Raises:
+            VectorStoreError: If index update fails
+        """
+        gcs_uri = f"gs://{bucket}/{prefix}"
+        try:
+            index = self.get_index(index_id)
+            index.update_embeddings(
+                contents_delta_uri=gcs_uri, is_complete_overwrite=is_complete_overwrite
+            )
+            logger.info(
+                f"Successfully updated index {index_id} with data from gs://{bucket}/{prefix}"
+            )
+            return index
+
+        except Exception as e:
+            logger.error(f"Failed to update index: {str(e)}")
+            raise VectorStoreError(f"Failed to update index: {str(e)}")
 
     @retry_with_backoff()
     def get_index_endpoint(
@@ -102,7 +150,7 @@ class VectorStoreManager:
         self,
         index_id: str,
         endpoint_id: str,
-        deployed_index_id: Optional[str] = None,
+        deployed_index_name: str,
         min_replica_count: int = 1,
         max_replica_count: int = 1,
     ) -> aiplatform.MatchingEngineIndexEndpoint:
@@ -112,7 +160,7 @@ class VectorStoreManager:
         Args:
             index_id (str): ID of the index to deploy
             endpoint_id (str): ID of the endpoint to deploy to
-            deployed_index_id (str, optional): Custom ID for the deployment
+            deployed_index_id (str): Custom Name for the deployment
             min_replica_count (int): Minimum number of replicas
             max_replica_count (int): Maximum number of replicas
 
@@ -128,26 +176,56 @@ class VectorStoreManager:
             endpoint = self.get_index_endpoint(endpoint_id)
 
             # Generate deployment ID if not provided
-            if not deployed_index_id:
-                deployed_index_id = str(ULID())
+            deployed_index_name += str(ULID())
 
             # Deploy the index
             endpoint = endpoint.deploy_index(
                 index=index,
-                deployed_index_id=deployed_index_id,
+                deployed_index_id=deployed_index_name,
                 min_replica_count=min_replica_count,
                 max_replica_count=max_replica_count,
             )
 
             logger.info(
                 f"Successfully deployed index {index_id} to endpoint {endpoint_id} "
-                f"with deployment ID {deployed_index_id}"
+                f"with deployment ID {deployed_index_name}"
             )
             return endpoint
 
         except Exception as e:
             logger.error(f"Failed to create index deployment: {str(e)}")
             raise VectorStoreError(f"Failed to create index deployment: {str(e)}")
+
+    @retry_with_backoff()
+    def get_index_deployment(
+        self, deployed_index_id: str
+    ) -> aiplatform.MatchingEngineIndexEndpoint:
+        """
+        Retrieves a specific deployment from an endpoint.
+
+        Args:
+            deployed_index_id (str): ID of the deployed index to retrieve
+
+        Returns:
+            aiplatform.MatchingEngineIndexEndpoint: Retrieved deployment
+
+        Raises:
+            VectorStoreError: If deployment retrieval fails
+        """
+        try:
+            # List all endpoints to find the one containing the deployment
+            endpoints = aiplatform.MatchingEngineIndexEndpoint.list()
+            for endpoint in endpoints:
+                for deployed_index in endpoint.deployed_indexes:
+                    if deployed_index.id == deployed_index_id:
+                        logger.info(f"Retrieved deployment {deployed_index_id}")
+                        return endpoint
+
+            raise VectorStoreError(f"Deployment {deployed_index_id} not found")
+
+        except Exception as e:
+            logger.error(f"Failed to get deployment: {str(e)}")
+            raise VectorStoreError(f"Failed to get deployment: {str(e)}")
 
     @retry_with_backoff()
     def delete_index_deployment(
@@ -186,7 +264,6 @@ class VectorStoreManager:
     @retry_with_backoff()
     def find_neighbors(
         self,
-        api_endpoint: str,
         feature_vector: List[float],
         endpoint_id: str,
         deployment_id: str,
@@ -210,7 +287,7 @@ class VectorStoreManager:
         """
         try:
             client = aiplatform_v1.MatchServiceClient(
-                client_options={"api_endpoint": api_endpoint}
+                client_options={"api_endpoint": self.api_endpoint}
             )
 
             full_endpoint_id = f"projects/{self.project_id}/locations/{self.location}/indexEndpoints/{endpoint_id}"
@@ -226,6 +303,8 @@ class VectorStoreManager:
                 queries=[query],
                 return_full_datapoint=False,
             )
+
+            logging.info("Generated request to find neighbors: {request}")
 
             response = client.find_neighbors(request)
             logger.info(f"Successfully found {neighbor_count} neighbors")
