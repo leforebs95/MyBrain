@@ -1,9 +1,7 @@
-from typing import List, Optional
+from typing import List
 import logging
 from PyPDF2 import PdfReader, PdfWriter
 import io
-import os
-from pathlib import Path
 
 from errors import StorageError
 from storage_manager import GCPStorageManager
@@ -139,7 +137,7 @@ class PDFReader:
             pdf_bytes.seek(0)
 
             # Generate output path
-            output_path = f"{output_prefix}_{page_number + 1}.pdf"
+            output_path = f"{output_prefix}_pg{page_number + 1}.pdf"
 
             # Upload to GCP
             bucket = self.storage_manager.storage_client.bucket(bucket_name)
