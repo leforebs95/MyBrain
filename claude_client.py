@@ -298,6 +298,7 @@ class RAGClaudeClient:
     def __init__(
         self,
         api_key: str,
+        vector_store_deployment_name: str,
         vector_store: VectorStoreManager,  # Reference to vector store for similarity search
         embedding_generator: EmbeddingGenerator,  # Reference to embedding generator
         database_manager: DatabaseManager,  # Reference to database manager
@@ -307,6 +308,7 @@ class RAGClaudeClient:
     ):
         try:
             self.client = anthropic.Anthropic(api_key=api_key)
+            self.vector_store_deployment_name = vector_store_deployment_name
             self.vector_store = vector_store
             self.embedding_generator = embedding_generator
             self.database_manager = database_manager
@@ -342,7 +344,7 @@ class RAGClaudeClient:
             neighbors = self.vector_store.find_neighbors(
                 prompt_embeddings[0],
                 "8859614007967875072",
-                "test_data_deployment_01JC3M86E10WXXH27P7F980ETB",
+                self.vector_store_deployment_name,
                 k,
             )
             nn_ids = [
