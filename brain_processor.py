@@ -157,9 +157,7 @@ class BrainProcessor:
             self.ocr_processor = OCRProcessor(self.storage_manager)
             self.text_improver = TextImprover(config["anthropic_api_key"])
             self.embedding_generator = EmbeddingGenerator(config["voyage_api_key"])
-            self.vector_store = VectorStoreManager(
-                config["gcp_project_id"], config["gcp_location"]
-            )
+            self.vector_store = VectorStoreManager(config["vector_store"])
             self.max_workers = max_workers
             self.retry_strategy = retry_strategy or RetryStrategy()
             self._progress_lock = threading.Lock()
