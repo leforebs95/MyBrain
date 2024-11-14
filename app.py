@@ -121,12 +121,12 @@ def process_pdf(local_path: str, filename: str) -> Dict:
 
         # Process single document
         results, progress = brain_processor.batch_process_documents(jobs)
-        brain_processor.store_embeddings(results)
 
         if results and len(results) > 0:
             return {
                 "original_ocr": results[0].original_ocr,
                 "improved_ocr": results[0].improved_ocr,
+                "embedding": results[0].embedding,
                 "success": True,
             }
         else:
@@ -174,6 +174,7 @@ def upload_file():
                     "preview": preview_base64,
                     "original_ocr": processing_results["original_ocr"],
                     "improved_ocr": processing_results["improved_ocr"],
+                    "embedding": processing_results["embedding"],
                 }
             )
         else:

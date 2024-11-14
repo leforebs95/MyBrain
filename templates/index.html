@@ -6,6 +6,7 @@
     <title>PDF Upload and Process</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/dropzone.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -72,12 +73,6 @@
             padding: 20px;
         }
         
-        .loading-indicator::after {
-            content: "Processing...";
-            display: block;
-            margin-top: 10px;
-        }
-        
         .tab-container {
             margin-bottom: 10px;
         }
@@ -101,6 +96,62 @@
         
         .tab-content.active {
             display: block;
+        }
+
+        /* New styles for embeddings visualization */
+        .embeddings-container {
+            height: 600px;
+            overflow-y: auto;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+
+        .embeddings-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .embeddings-chart {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-top: 15px;
+            height: 400px;
+        }
+
+        .embeddings-raw {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
         }
     </style>
 </head>
@@ -126,26 +177,107 @@
         </div>
         
         <div class="ocr-container">
-            <h2>OCR Results</h2>
+            <h2>Results</h2>
             <div class="tab-container">
                 <button class="tab-button active" data-tab="original">Original OCR</button>
                 <button class="tab-button" data-tab="improved">Improved OCR</button>
+                <button class="tab-button" data-tab="embeddings">Embeddings</button>
             </div>
             <div id="original-ocr" class="ocr-text tab-content active"></div>
             <div id="improved-ocr" class="ocr-text tab-content"></div>
+            <div id="embeddings-ocr" class="tab-content">
+                <div class="embeddings-container">
+                    <div class="embeddings-stats">
+                        <div class="stat-card">
+                            <div class="stat-label">Dimensions</div>
+                            <div id="embeddings-dimensions" class="stat-value">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Average Value</div>
+                            <div id="embeddings-avg" class="stat-value">-</div>
+                        </div>
+                    </div>
+                    <div class="embeddings-chart">
+                        <canvas id="embeddings-chart"></canvas>
+                    </div>
+                    <div class="embeddings-raw" id="embeddings-raw"></div>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
-        // Tab switching functionality
+        let embeddingsChart = null;
+
+        function initializeEmbeddingsChart(embeddings) {
+            if (embeddingsChart) {
+                embeddingsChart.destroy();
+            }
+
+            const ctx = document.getElementById('embeddings-chart').getContext('2d');
+            
+            // Calculate statistics
+            const dimensions = embeddings.length;
+            const average = embeddings.reduce((a, b) => a + b, 0) / dimensions;
+            
+            // Update statistics display
+            document.getElementById('embeddings-dimensions').textContent = dimensions;
+            document.getElementById('embeddings-avg').textContent = average.toFixed(6);
+            
+            // Display raw embeddings
+            document.getElementById('embeddings-raw').textContent = 
+                `[${embeddings.slice(0, 10).map(v => v.toFixed(6)).join(', ')}...]`;
+
+            // Create visualization (first 50 dimensions)
+            embeddingsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: 50}, (_, i) => `D${i+1}`),
+                    datasets: [{
+                        label: 'Embedding Values',
+                        data: embeddings.slice(0, 50),
+                        borderColor: 'rgb(0, 123, 255)',
+                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'First 50 Dimensions of Embedding Vector'
+                        },
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Value'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Dimension'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Tab switching functionality stays the same
         document.querySelectorAll('.tab-button').forEach(button => {
             button.addEventListener('click', () => {
-                // Update button states
                 document.querySelectorAll('.tab-button').forEach(btn => 
                     btn.classList.remove('active'));
                 button.classList.add('active');
                 
-                // Update content visibility
                 document.querySelectorAll('.tab-content').forEach(content => 
                     content.classList.remove('active'));
                 document.getElementById(`${button.dataset.tab}-ocr`).classList.add('active');
@@ -164,15 +296,20 @@
 
                 this.on("success", function(file, response) {
                     document.getElementById('loading').style.display = 'none';
-                    const previewImage = document.getElementById('preview-image');
-                    const originalOcr = document.getElementById('original-ocr');
-                    const improvedOcr = document.getElementById('improved-ocr');
                     
                     if (response.preview) {
+                        const previewImage = document.getElementById('preview-image');
                         previewImage.src = `data:image/png;base64,${response.preview}`;
                         previewImage.style.display = 'inline-block';
-                        originalOcr.textContent = response.original_ocr || 'No OCR text available';
-                        improvedOcr.textContent = response.improved_ocr || 'No improved OCR text available';
+                        
+                        document.getElementById('original-ocr').textContent = 
+                            response.original_ocr || 'No OCR text available';
+                        document.getElementById('improved-ocr').textContent = 
+                            response.improved_ocr || 'No improved OCR text available';
+                        
+                        if (response.embedding && response.embedding.length > 0) {
+                            initializeEmbeddingsChart(response.embedding);
+                        }
                     }
                 });
 
