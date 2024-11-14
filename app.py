@@ -40,7 +40,7 @@ def init_processors(config: Dict) -> tuple:
     embedding_generator = EmbeddingGenerator(config["voyage_api_key"])
     rag_claude = RAGClaudeClient(
         config["anthropic_api_key"],
-        "test_data_example_deployment_01JCHA9B83RN0PAF3NHVBPVA9M",  # You might want to make this configurable
+        "my_brain_example_deployment_01JCMN355HEGT61CDQFBZYPK7R",  # You might want to make this configurable
         vector_store,
         embedding_generator,
         brain_processor.database_manager,
@@ -180,6 +180,45 @@ def upload_file():
         else:
             error_message = processing_results.get("error", "Failed to process file")
             return jsonify({"error": error_message}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/save_embeddings", methods=["POST"])
+def save_embeddings():
+    """Save embeddings using brain processor"""
+    try:
+        data = request.json
+        if not data or "results" not in data:
+            return jsonify({"error": "No results provided"}), 400
+
+        # Convert the JSON results back to OCRResult objects
+        ocr_results = []
+        for result in data["results"]:
+            ocr_result = OCRResult(
+                id=result["id"],
+                input_pdf=result["input_pdf"],
+                output_base=result["output_base"],
+                original_ocr=result.get("original_ocr"),
+                improved_ocr=result.get("improved_ocr"),
+                embedding=result.get("embedding"),
+                metadata=result.get("metadata", {}),
+            )
+            ocr_results.append(ocr_result)
+
+        # Store the embeddings
+        success, progress = brain_processor.store_embeddings(ocr_results)
+
+        if success:
+            return jsonify(
+                {
+                    "message": "Embeddings saved successfully",
+                    "progress": progress.to_dict() if progress else None,
+                }
+            )
+        else:
+            return jsonify({"error": "Failed to save embeddings"}), 500
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

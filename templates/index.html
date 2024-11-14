@@ -153,6 +153,39 @@
             max-height: 200px;
             overflow-y: auto;
         }
+
+        .action-buttons {
+            margin: 20px 0;
+            text-align: right;
+        }
+        
+        .save-button {
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .save-button:hover {
+            background-color: #218838;
+        }
+        
+        .save-button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .success-message {
+            color: #28a745;
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #d4edda;
+            border-radius: 5px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -163,6 +196,10 @@
                 <span>Drop PDF files here or click to upload</span>
             </div>
         </form>
+    </div>
+    
+    <div class="action-buttons">
+        <button id="save-button" class="save-button" disabled>Save Results</button>
     </div>
     
     <div id="error-message"></div>
@@ -207,6 +244,7 @@
     </div>
 
     <script>
+        let currentResults = null;
         let embeddingsChart = null;
 
         function initializeEmbeddingsChart(embeddings) {
@@ -319,6 +357,96 @@
                     errorDiv.textContent = typeof errorMessage === 'string' ? 
                         errorMessage : 'Error uploading file';
                     errorDiv.style.display = 'block';
+                });
+            }
+        };
+        // Add save functionality
+        document.getElementById('save-button').addEventListener('click', async () => {
+            if (!currentResults) return;
+
+            const saveButton = document.getElementById('save-button');
+            const successMessage = document.getElementById('success-message');
+            const errorMessage = document.getElementById('error-message');
+            
+            // Disable button and show loading state
+            saveButton.disabled = true;
+            saveButton.textContent = 'Saving...';
+            
+            try {
+                const response = await fetch('/save_embeddings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        results: [currentResults]
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    successMessage.textContent = 'Results saved successfully!';
+                    successMessage.style.display = 'block';
+                    errorMessage.style.display = 'none';
+                } else {
+                    throw new Error(data.error || 'Failed to save results');
+                }
+            } catch (error) {
+                errorMessage.textContent = error.message;
+                errorMessage.style.display = 'block';
+                successMessage.style.display = 'none';
+                // Re-enable save button on error
+                saveButton.disabled = false;
+            } finally {
+                saveButton.textContent = 'Save Results';
+            }
+        });
+
+        Dropzone.options.pdfUpload = {
+            acceptedFiles: ".pdf",
+            maxFilesize: 16,
+            maxFiles: 1,
+            init: function() {
+                this.on("sending", function() {
+                    document.getElementById('loading').style.display = 'block';
+                    document.getElementById('error-message').style.display = 'none';
+                    document.getElementById('success-message').style.display = 'none';
+                    document.getElementById('save-button').disabled = true;
+                });
+
+                this.on("success", function(file, response) {
+                    document.getElementById('loading').style.display = 'none';
+                    
+                    if (response.preview) {
+                        // Store the results for saving later
+                        currentResults = response;
+                        
+                        const previewImage = document.getElementById('preview-image');
+                        previewImage.src = `data:image/png;base64,${response.preview}`;
+                        previewImage.style.display = 'inline-block';
+                        
+                        document.getElementById('original-ocr').textContent = 
+                            response.original_ocr || 'No OCR text available';
+                        document.getElementById('improved-ocr').textContent = 
+                            response.improved_ocr || 'No improved OCR text available';
+                        
+                        if (response.embedding && response.embedding.length > 0) {
+                            initializeEmbeddingsChart(response.embedding);
+                        }
+
+                        // Enable save button
+                        document.getElementById('save-button').disabled = false;
+                    }
+                });
+
+                this.on("error", function(file, errorMessage) {
+                    document.getElementById('loading').style.display = 'none';
+                    const errorDiv = document.getElementById('error-message');
+                    errorDiv.textContent = typeof errorMessage === 'string' ? 
+                        errorMessage : 'Error uploading file';
+                    errorDiv.style.display = 'block';
+                    document.getElementById('save-button').disabled = true;
                 });
             }
         };
