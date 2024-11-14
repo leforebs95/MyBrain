@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from contextlib import contextmanager
 
+import numpy
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from sqlalchemy import Column, String, DateTime, JSON
@@ -46,23 +47,32 @@ class Document(Base):
     improved_ocr = Column(String)
     embedding = Column(Vector(1024))
     doc_metadata = Column(JSONB, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
     updated_at = Column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True),
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
     )
 
     def to_dict(self) -> Dict:
         """Convert model instance to dictionary."""
+        logger.info(f"Converting document {self.id} to dictionary")
         return {
             "id": self.id,
             "input_pdf": self.input_pdf,
             "output_base": self.output_base,
             "original_ocr": self.original_ocr,
             "improved_ocr": self.improved_ocr,
-            "embedding": (list(self.embedding) if self.embedding else None),
+            "embedding": (
+                [
+                    float(flt)
+                    for flt in list(self.embedding)
+                    if isinstance(flt, numpy.float32)
+                ]
+                if isinstance(self.embedding, numpy.ndarray)
+                else None
+            ),
             "doc_metadata": self.doc_metadata,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
