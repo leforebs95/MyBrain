@@ -366,7 +366,7 @@ class BrainProcessor:
 
             csv_filename = "handwritten-embeddings/batch_root/embeddings.json"
             self.storage_manager.upload_data(
-                data=json.loads(json_str),
+                data=json_str,
                 prefix=csv_filename,
                 bucket_name="my-brain-vector-store",
             )
@@ -374,7 +374,7 @@ class BrainProcessor:
 
             progress.completed_jobs = len(results)
             progress.end_time = datetime.now()
-            return True, progress
+            return json_str, progress
 
         except Exception as e:
             progress.failed_jobs = len(results)
