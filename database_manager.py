@@ -11,7 +11,6 @@ from sqlalchemy.dialects.postgresql import insert, JSONB
 from pgvector.sqlalchemy import Vector
 from google.cloud.sql.connector import Connector
 
-from brain_processor import OCRResult
 from errors import DatabaseError
 from utils import retry_with_backoff
 
@@ -163,7 +162,7 @@ class DatabaseManager:
             raise DatabaseError(f"Failed to store document: {str(e)}")
 
     @retry_with_backoff()
-    def bulk_update_documents(self, ocr_results: List[OCRResult]) -> List[str]:
+    def bulk_update_documents(self, ocr_results: List["OCRResult"]) -> List[str]:
         """Perform bulk update of documents."""
         try:
             with self.get_session() as session:
