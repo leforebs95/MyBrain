@@ -1,7 +1,7 @@
 from typing import List
 import logging
 
-from utils import retry_with_backoff
+from utils import RetryStrategy, retry_with_backoff
 from google.cloud import storage
 
 from errors import StorageError
@@ -125,3 +125,28 @@ class GCPStorageManager:
         except Exception as e:
             logger.error(f"Failed to upload file: {str(e)}")
             raise StorageError(f"Failed to upload file: {str(e)}")
+
+    @retry_with_backoff(RetryStrategy(max_retries=0))
+    def download_data(self, bucket_name: str, blob_name: str) -> str:
+        """
+        Downloads a blob from a specified GCP bucket as text.
+
+        Args:
+            bucket_name (str): Name of the bucket
+            blob_name (str): Name of the blob to download
+
+        Returns:
+            str: Content of the downloaded blob
+
+        Raises:
+            StorageError: If the download fails
+        """
+        try:
+            bucket = self.storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+            data = blob.download_as_text()
+            logger.info(f"Successfully downloaded {blob_name} from {bucket_name}")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to download blob: {str(e)}")
+            raise StorageError(f"Failed to download blob: {str(e)}")
