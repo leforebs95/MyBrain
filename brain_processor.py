@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional, Tuple, NamedTuple
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from time import sleep
@@ -17,6 +17,8 @@ from vector_store_manager import VectorStoreManager
 from errors import BrainProcessingError, StorageError
 from utils import RetryStrategy
 from ulid import ULID
+import csv
+from io import StringIO
 
 # Configure logging
 logging.basicConfig(
@@ -44,7 +46,7 @@ class OCRResult:
     original_ocr: Optional[str] = None
     improved_ocr: Optional[str] = None
     embedding: Optional[List[float]] = None
-    metadata: Dict = field(default_factory=dict)
+    doc_metadata: Dict = field(default_factory=dict)
 
 
 @dataclass
@@ -275,7 +277,6 @@ class BrainProcessor:
     def batch_process_documents(
         self,
         jobs: List[ProcessingJob],
-        save_results: bool = True,
         progress_callback: Optional[callable] = None,
     ) -> Tuple[List[OCRResult], ProcessingProgress]:
         """
@@ -322,13 +323,6 @@ class BrainProcessor:
         # Set completion time
         progress.end_time = datetime.now()
 
-        # Save results if requested
-        if save_results and results:
-            try:
-                self.store_embeddings(results)
-            except StorageError as e:
-                logger.error(f"Failed to save some results: {str(e)}")
-
         # Report any failures
         if failed_documents:
             failure_messages = "\n".join(
@@ -337,16 +331,12 @@ class BrainProcessor:
             logger.error(
                 f"Batch processing completed with failures:\n{failure_messages}"
             )
-            raise BrainProcessingError(
-                f"Batch processing failed for some documents:\n{failure_messages}"
-            )
 
         return results, progress
 
     def store_embeddings(
         self,
         results: List[OCRResult],
-        progress_callback: Optional[callable] = None,
     ) -> Tuple[bool, ProcessingProgress]:
         """
         Saves processing results to storage in parallel with retry logic.
@@ -362,89 +352,22 @@ class BrainProcessor:
         Raises:
             StorageError: If saving results fails after all retries
         """
-        failed_saves = []
-        progress = ProcessingProgress(total_jobs=len(results))
-        progress_lock = threading.Lock()
+        import pandas as pd
 
-        def save_single_result(
-            index: int, result: OCRResult, retry_count: int = 0
-        ) -> Tuple[int, Optional[str]]:
-            """Helper function to save a single result with retry logic."""
-            while retry_count < self.retry_strategy.max_retries:
-                try:
-                    output_file = f"handwritten-embeddings/{result.input_pdf.replace('.pdf', '')}.json"
-                    result_dict = result.__dict__
-                    vector_dict = {"id": result.id, "embedding": result.embedding}
+        self.database_manager.bulk_update_documents(results)
 
-                    self.storage_manager.upload_data(
-                        json.dumps(vector_dict),
-                        output_file,
-                        "my-brain-vector-store",
-                    )
+        all_embeddings = pd.DataFrame(
+            self.database_manager.get_table_as_list("documents")
+        )
+        json_str = all_embeddings[["id", "embedding"]].to_json(
+            orient="records", lines=True
+        )
 
-                    self.database_manager.store_document(result_dict)
+        csv_filename = "handwritten-embeddings/batch_root/embeddings.json"
+        self.storage_manager.upload_data(
+            data=json.dumps(json_str),
+            prefix=csv_filename,
+            bucket_name="my-brain-vector-store",
+        )
 
-                    with progress_lock:
-                        if retry_count > 0:
-                            progress.retried_jobs += 1
-                        progress.completed_jobs += 1
-                        if progress_callback:
-                            progress_callback(progress.to_dict())
-
-                    logger.info(
-                        f"Saved results for {result.input_pdf} to {output_file}"
-                        + (
-                            f" (after {retry_count + 1} attempts)"
-                            if retry_count > 0
-                            else ""
-                        )
-                    )
-                    return index, None
-
-                except Exception as e:
-                    retry_count += 1
-                    error_msg = f"Failed to save result {index} (Attempt {retry_count}): {str(e)}"
-                    logger.warning(error_msg)
-
-                    if retry_count < self.retry_strategy.max_retries:
-                        sleep_time = self.retry_strategy.get_delay(retry_count)
-                        logger.info(
-                            f"Retrying save for index {index} in {sleep_time:.2f} seconds"
-                        )
-                        sleep(sleep_time)
-                    else:
-                        with progress_lock:
-                            progress.failed_jobs += 1
-                            if progress_callback:
-                                progress_callback(progress.to_dict())
-                        return index, error_msg
-
-            return index, f"Exceeded maximum retry attempts for index {index}"
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all save operations
-            future_to_index = {
-                executor.submit(save_single_result, i, result): i
-                for i, result in enumerate(results)
-            }
-
-            # Process completed saves
-            for future in as_completed(future_to_index):
-                index, error = future.result()
-                if error:
-                    failed_saves.append((index, error))
-
-        # Set completion time
-        progress.end_time = datetime.now()
-
-        # Handle any failures
-        if failed_saves:
-            failure_messages = "\n".join(
-                [f"Result {idx}: {err}" for idx, err in failed_saves]
-            )
-            logger.error(
-                f"Save operation completed with {len(failed_saves)} failures:\n{failure_messages}"
-            )
-            raise StorageError(f"Failed to save some results:\n{failure_messages}")
-
-        return True, progress
+        return True
