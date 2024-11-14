@@ -343,8 +343,6 @@ class BrainProcessor:
 
         Args:
             results (List[OCRResult]): Processing results to save
-            output_prefix (str): Prefix for output files
-            progress_callback (callable, optional): Function to call with progress updates
 
         Returns:
             Tuple[bool, ProcessingProgress]: Success status and progress info
@@ -354,20 +352,32 @@ class BrainProcessor:
         """
         import pandas as pd
 
-        self.database_manager.bulk_update_documents(results)
+        progress = ProcessingProgress(total_jobs=len(results))
 
-        all_embeddings = pd.DataFrame(
-            self.database_manager.get_table_as_list("documents")
-        )
-        json_str = all_embeddings[["id", "embedding"]].to_json(
-            orient="records", lines=True
-        )
+        try:
+            self.database_manager.bulk_update_documents(results)
+            logger.info("Successfully updated documents in the database.")
 
-        csv_filename = "handwritten-embeddings/batch_root/embeddings.json"
-        self.storage_manager.upload_data(
-            data=json.dumps(json_str),
-            prefix=csv_filename,
-            bucket_name="my-brain-vector-store",
-        )
+            all_embeddings = pd.DataFrame(
+                self.database_manager.get_table_as_list("documents")
+            )[["id", "embedding"]]
+            all_embeddings["embedding"] = all_embeddings["embedding"].apply(json.loads)
+            json_str = all_embeddings.to_json(orient="records", lines=True)
 
-        return True
+            csv_filename = "handwritten-embeddings/batch_root/embeddings.json"
+            self.storage_manager.upload_data(
+                data=json.loads(json_str),
+                prefix=csv_filename,
+                bucket_name="my-brain-vector-store",
+            )
+            logger.info(f"Successfully uploaded embeddings to {csv_filename}.")
+
+            progress.completed_jobs = len(results)
+            progress.end_time = datetime.now()
+            return True, progress
+
+        except Exception as e:
+            progress.failed_jobs = len(results)
+            progress.end_time = datetime.now()
+            logger.error(f"Failed to store embeddings: {str(e)}")
+            raise StorageError(f"Failed to store embeddings: {str(e)}")
