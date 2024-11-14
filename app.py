@@ -17,7 +17,7 @@ from claude_client import RAGClaudeClient
 from embedding_generator import EmbeddingGenerator
 from storage_manager import GCPStorageManager
 from pdf_reader import PDFReader
-from brain_processor import BrainProcessor, ProcessingJob
+from brain_processor import BrainProcessor, ProcessingJob, OCRResult
 from database_manager import DatabaseConfig
 from vector_store_manager import VectorStoreConfig, VectorStoreManager
 
