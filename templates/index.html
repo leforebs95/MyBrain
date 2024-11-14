@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Upload and Process</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/dropzone.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .upload-container {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .results-container {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .preview-container {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .ocr-container {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .ocr-text {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 600px;
+            overflow-y: auto;
+            font-family: monospace;
+        }
+        
+        .preview-image {
+            max-width: 100%;
+            max-height: 600px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        #error-message {
+            color: red;
+            margin-top: 10px;
+            display: none;
+            padding: 10px;
+            background-color: #fff3f3;
+            border-radius: 5px;
+        }
+        
+        .loading-indicator {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .loading-indicator::after {
+            content: "Processing...";
+            display: block;
+            margin-top: 10px;
+        }
+        
+        .tab-container {
+            margin-bottom: 10px;
+        }
+        
+        .tab-button {
+            padding: 8px 16px;
+            border: none;
+            background: #f0f0f0;
+            cursor: pointer;
+            border-radius: 5px 5px 0 0;
+        }
+        
+        .tab-button.active {
+            background: #007bff;
+            color: white;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Upload and Process</h1>
+    <div class="upload-container">
+        <form action="/upload" class="dropzone" id="pdfUpload">
+            <div class="dz-message" data-dz-message>
+                <span>Drop PDF files here or click to upload</span>
+            </div>
+        </form>
+    </div>
+    
+    <div id="error-message"></div>
+    <div id="loading" class="loading-indicator">
+        <div class="spinner"></div>
+    </div>
+    
+    <div class="results-container">
+        <div class="preview-container">
+            <h2>PDF Preview</h2>
+            <img id="preview-image" class="preview-image" alt="PDF Preview">
+        </div>
+        
+        <div class="ocr-container">
+            <h2>OCR Results</h2>
+            <div class="tab-container">
+                <button class="tab-button active" data-tab="original">Original OCR</button>
+                <button class="tab-button" data-tab="improved">Improved OCR</button>
+            </div>
+            <div id="original-ocr" class="ocr-text tab-content active"></div>
+            <div id="improved-ocr" class="ocr-text tab-content"></div>
+        </div>
+    </div>
+
+    <script>
+        // Tab switching functionality
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                // Update button states
+                document.querySelectorAll('.tab-button').forEach(btn => 
+                    btn.classList.remove('active'));
+                button.classList.add('active');
+                
+                // Update content visibility
+                document.querySelectorAll('.tab-content').forEach(content => 
+                    content.classList.remove('active'));
+                document.getElementById(`${button.dataset.tab}-ocr`).classList.add('active');
+            });
+        });
+
+        Dropzone.options.pdfUpload = {
+            acceptedFiles: ".pdf",
+            maxFilesize: 16,
+            maxFiles: 1,
+            init: function() {
+                this.on("sending", function() {
+                    document.getElementById('loading').style.display = 'block';
+                    document.getElementById('error-message').style.display = 'none';
+                });
+
+                this.on("success", function(file, response) {
+                    document.getElementById('loading').style.display = 'none';
+                    const previewImage = document.getElementById('preview-image');
+                    const originalOcr = document.getElementById('original-ocr');
+                    const improvedOcr = document.getElementById('improved-ocr');
+                    
+                    if (response.preview) {
+                        previewImage.src = `data:image/png;base64,${response.preview}`;
+                        previewImage.style.display = 'inline-block';
+                        originalOcr.textContent = response.original_ocr || 'No OCR text available';
+                        improvedOcr.textContent = response.improved_ocr || 'No improved OCR text available';
+                    }
+                });
+
+                this.on("error", function(file, errorMessage) {
+                    document.getElementById('loading').style.display = 'none';
+                    const errorDiv = document.getElementById('error-message');
+                    errorDiv.textContent = typeof errorMessage === 'string' ? 
+                        errorMessage : 'Error uploading file';
+                    errorDiv.style.display = 'block';
+                });
+            }
+        };
+    </script>
+</body>
+</html>
