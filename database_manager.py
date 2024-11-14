@@ -1,14 +1,17 @@
-from typing import Dict, List, Optional
-import logging
 from dataclasses import dataclass
+from typing import List, Dict, Optional
+import logging
+from datetime import datetime, timezone
 from contextlib import contextmanager
 
-import sqlalchemy
-from sqlalchemy import text
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from sqlalchemy import Column, String, DateTime, JSON
+from sqlalchemy.dialects.postgresql import insert, JSONB
+from pgvector.sqlalchemy import Vector
 from google.cloud.sql.connector import Connector
-from sqlalchemy.pool import QueuePool
-from sqlalchemy.exc import SQLAlchemyError
 
+from brain_processor import OCRResult
 from errors import DatabaseError
 from utils import retry_with_backoff
 
@@ -17,6 +20,9 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Create declarative base
+Base = declarative_base()
 
 
 @dataclass
@@ -29,32 +35,62 @@ class DatabaseConfig:
     max_overflow: int = 2
 
 
+class Document(Base):
+    """SQLAlchemy model for documents table."""
+
+    __tablename__ = "documents"
+
+    id = Column(String, primary_key=True)
+    input_pdf = Column(String, nullable=False)
+    output_base = Column(String, nullable=False)
+    original_ocr = Column(String)
+    improved_ocr = Column(String)
+    embedding = Column(Vector(1024))
+    doc_metadata = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    def to_dict(self) -> Dict:
+        """Convert model instance to dictionary."""
+        return {
+            "id": self.id,
+            "input_pdf": self.input_pdf,
+            "output_base": self.output_base,
+            "original_ocr": self.original_ocr,
+            "improved_ocr": self.improved_ocr,
+            "embedding": (list(self.embedding) if self.embedding else None),
+            "doc_metadata": self.doc_metadata,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class DatabaseManager:
-    """
-    Manages PostgreSQL database operations with support for vector storage.
-    Uses Cloud SQL Connector and SQLAlchemy connection pooling.
-    """
+    """Manages PostgreSQL database operations using SQLAlchemy ORM."""
 
     def __init__(self, config: DatabaseConfig):
-        """Initialize database connection pool."""
+        """Initialize database connection pool and ORM setup."""
         try:
             self.config = config
             self.connector = Connector()
 
-            # Initialize the connection pool
-            self.engine = sqlalchemy.create_engine(
+            # Initialize the connection pool with SQLAlchemy
+            self.engine = create_engine(
                 "postgresql+pg8000://",
                 creator=self._get_connection,
-                poolclass=QueuePool,
                 pool_size=config.pool_size,
                 max_overflow=config.max_overflow,
             )
 
-            # Test connection and initialize database
-            with self.get_connection() as conn:
-                self._init_database(conn)
+            # Create session factory
+            self.Session = sessionmaker(bind=self.engine)
 
-            logger.info("Initialized DatabaseManager with connection pool")
+            # Initialize database
+            self._init_database()
+
+            logger.info("Initialized DatabaseManager with SQLAlchemy ORM")
         except Exception as e:
             logger.error(f"Failed to initialize DatabaseManager: {str(e)}")
             raise DatabaseError(f"Database initialization failed: {str(e)}")
@@ -75,124 +111,102 @@ class DatabaseManager:
             raise DatabaseError(f"Connection creation failed: {str(e)}")
 
     @contextmanager
-    def get_connection(self):
-        """Context manager for database connections."""
+    def get_session(self) -> Session:
+        """Provide a transactional scope around a series of operations."""
+        session = self.Session()
         try:
-            with self.engine.connect() as connection:
-                yield connection
-        except SQLAlchemyError as e:
-            logger.error(f"Database connection error: {str(e)}")
-            raise DatabaseError(f"Database connection error: {str(e)}")
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
 
-    def _init_database(self, connection):
+    def _init_database(self):
         """Initialize database schema and extensions."""
         try:
-            # Enable vector extension
-            connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            # Create vector extension if it doesn't exist
+            with self.engine.connect() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
 
-            # Create documents table
-            connection.execute(
-                text(
-                    """
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY,
-                    input_pdf TEXT NOT NULL,
-                    output_base TEXT NOT NULL,
-                    original_ocr TEXT,
-                    improved_ocr TEXT,
-                    embedding_vector vector(1024),
-                    metadata JSONB,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-            """
-                )
-            )
-
-            # Create updated_at trigger
-            connection.execute(
-                text(
-                    """
-                CREATE OR REPLACE FUNCTION update_timestamp()
-                RETURNS TRIGGER AS $$
-                BEGIN
-                    NEW.updated_at = NOW();
-                    RETURN NEW;
-                END;
-                $$ LANGUAGE plpgsql;
-                """
-                )
-            )
-
-            connection.execute(
-                text(
-                    """
-                DROP TRIGGER IF EXISTS update_documents_updated_at ON documents;
-                CREATE TRIGGER update_documents_updated_at
-                    BEFORE UPDATE ON documents
-                    FOR EACH ROW
-                    EXECUTE PROCEDURE update_timestamp();
-            """
-                )
-            )
-
-            connection.commit()
-        except SQLAlchemyError as e:
+            # Create all tables
+            Base.metadata.create_all(self.engine)
+            logger.info("Database initialized successfully")
+        except Exception as e:
             logger.error(f"Failed to initialize database: {str(e)}")
             raise DatabaseError(f"Database initialization failed: {str(e)}")
 
-    def _format_vector(self, embedding: List[float]) -> str:
-        """Format a vector for pgvector storage."""
-        if embedding is None:
-            return None
-        return f"[{','.join(str(x) for x in embedding)}]"
-
     @retry_with_backoff()
     def store_document(self, doc_data: Dict) -> str:
-        """Store document data in PostgreSQL."""
+        """Store or update a document in the database."""
         try:
-            logger.info(f"Storing document with data: {doc_data.keys()}")
-            with self.get_connection() as conn:
-                query = text(
-                    """
-                    INSERT INTO documents (
-                    id, input_pdf, output_base, original_ocr, 
-                    improved_ocr, embedding_vector, metadata
-                ) VALUES (
-                    :id, :input_pdf, :output_base, :original_ocr, 
-                    :improved_ocr, :embedding_vector, :metadata
-                )
-                ON CONFLICT (id) DO UPDATE SET
-                    input_pdf = EXCLUDED.input_pdf,
-                    output_base = EXCLUDED.output_base,
-                    original_ocr = EXCLUDED.original_ocr,
-                    improved_ocr = EXCLUDED.improved_ocr,
-                    embedding_vector = EXCLUDED.embedding_vector
-                RETURNING id;
-                """
+            with self.get_session() as session:
+                document = Document(
+                    id=doc_data["id"],
+                    input_pdf=doc_data["input_pdf"],
+                    output_base=doc_data["output_base"],
+                    original_ocr=doc_data.get("original_ocr"),
+                    improved_ocr=doc_data.get("improved_ocr"),
+                    embedding=doc_data.get("embedding"),
+                    doc_metadata=doc_data.get("doc_metadata", {}),
                 )
 
-                result = conn.execute(
-                    query,
-                    {
-                        "id": doc_data["id"],
-                        "input_pdf": doc_data["input_pdf"],
-                        "output_base": doc_data["output_base"],
-                        "original_ocr": doc_data.get("original_ocr"),
-                        "improved_ocr": doc_data.get("improved_ocr"),
-                        "embedding_vector": self._format_vector(
-                            doc_data.get("embedding")
-                        ),
-                        "metadata": doc_data.get("metadata", {}),
+                session.merge(
+                    document
+                )  # Use merge instead of add to handle both insert and update
+                return document.id
+
+        except Exception as e:
+            logger.error(f"Failed to store document: {str(e)}")
+            raise DatabaseError(f"Failed to store document: {str(e)}")
+
+    @retry_with_backoff()
+    def bulk_update_documents(self, ocr_results: List[OCRResult]) -> List[str]:
+        """Perform bulk update of documents."""
+        try:
+            with self.get_session() as session:
+                documents = []
+                for result in ocr_results:
+                    document = dict(
+                        id=result.id,
+                        input_pdf=result.input_pdf,
+                        output_base=result.output_base,
+                        original_ocr=result.original_ocr,
+                        improved_ocr=result.improved_ocr,
+                        embedding=result.embedding,
+                        doc_metadata=result.doc_metadata,
+                    )
+                    documents.append(document)
+
+                # Create the upsert statement
+                stmt = insert(Document).values(documents)
+
+                # Handle the ON CONFLICT case
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "input_pdf": stmt.excluded.input_pdf,
+                        "output_base": stmt.excluded.output_base,
+                        "original_ocr": stmt.excluded.original_ocr,
+                        "improved_ocr": stmt.excluded.improved_ocr,
+                        "embedding": stmt.excluded.embedding,
+                        "doc_metadata": stmt.excluded.doc_metadata,
+                        "updated_at": datetime.now(timezone.utc),
                     },
                 )
 
-                conn.commit()
-                return result.scalar_one()
+                # Execute the statement
+                result = session.execute(stmt)
+                session.commit()
 
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to store document: {str(e)}")
-            raise DatabaseError(f"Failed to store document: {str(e)}")
+                # Return list of document IDs
+                return [doc["id"] for doc in documents]
+
+        except Exception as e:
+            logger.error(f"Bulk update operation failed: {str(e)}")
+            raise DatabaseError(f"Bulk update operation failed: {str(e)}")
 
     @retry_with_backoff()
     def find_similar_documents(
@@ -200,36 +214,18 @@ class DatabaseManager:
     ) -> List[Dict]:
         """Find similar documents using vector similarity search."""
         try:
-            with self.get_connection() as conn:
-                query = text(
-                    """
-                    SELECT 
-                        id, 
-                        input_pdf,
-                        improved_ocr,
-                        metadata,
-                        1 - (embedding_vector <=> :embedding) as similarity
-                    FROM documents
-                    WHERE embedding_vector IS NOT NULL
-                    ORDER BY embedding_vector <=> :embedding
-                    LIMIT :limit;
-                """
+            with self.get_session() as session:
+                # Using SQLAlchemy's text() for the vector operation
+                results = (
+                    session.query(Document)
+                    .order_by(Document.embedding.cosine_distance(embedding))
+                    .limit(limit)
+                    .all()
                 )
 
-                result = conn.execute(query, {"embedding": embedding, "limit": limit})
+                return [doc.to_dict() for doc in results]
 
-                return [
-                    {
-                        "id": row.id,
-                        "input_pdf": row.input_pdf,
-                        "improved_ocr": row.improved_ocr,
-                        "metadata": row.metadata,
-                        "similarity": float(row.similarity),
-                    }
-                    for row in result
-                ]
-
-        except SQLAlchemyError as e:
+        except Exception as e:
             logger.error(f"Failed to find similar documents: {str(e)}")
             raise DatabaseError(f"Failed to find similar documents: {str(e)}")
 
@@ -237,44 +233,45 @@ class DatabaseManager:
     def find_document_by_id(self, doc_id: str) -> Optional[Dict]:
         """Find a document by its ID."""
         try:
-            with self.get_connection() as conn:
-                query = text(
-                    """
-                    SELECT 
-                        id, 
-                        input_pdf,
-                        output_base,
-                        original_ocr,
-                        improved_ocr,
-                        embedding_vector,
-                        metadata,
-                        created_at,
-                        updated_at
-                    FROM documents
-                    WHERE id = :id;
-                """
-                )
+            with self.get_session() as session:
+                document = session.query(Document).filter(Document.id == doc_id).first()
+                return document.to_dict() if document else None
 
-                result = conn.execute(query, {"id": doc_id}).fetchone()
-
-                if result:
-                    return {
-                        "id": result.id,
-                        "input_pdf": result.input_pdf,
-                        "output_base": result.output_base,
-                        "original_ocr": result.original_ocr,
-                        "improved_ocr": result.improved_ocr,
-                        "embedding_vector": result.embedding_vector,
-                        "metadata": result.metadata,
-                        "created_at": result.created_at,
-                        "updated_at": result.updated_at,
-                    }
-                else:
-                    return None
-
-        except SQLAlchemyError as e:
+        except Exception as e:
             logger.error(f"Failed to find document by ID: {str(e)}")
             raise DatabaseError(f"Failed to find document by ID: {str(e)}")
+
+    @retry_with_backoff()
+    def get_table_as_list(self, table_name: str) -> List[Dict]:
+        """
+        Query all records from a table and return them as a list of dictionaries.
+
+        Args:
+            table_name (str): Name of the table to query
+
+        Returns:
+            List[Dict]: List of records as dictionaries
+
+        Example:
+            docs = db.get_table_as_list('documents')
+        """
+        try:
+            with self.get_session() as session:
+                # Get table model from table name
+                table = inspect(self.engine).get_table_names()
+                if table_name not in table:
+                    raise DatabaseError(f"Table '{table_name}' not found in database")
+
+                # Build and execute query
+                query = text(f"SELECT * FROM {table_name}")
+                result = session.execute(query)
+
+                # Convert results to list of dictionaries
+                return [dict(row._mapping) for row in result]
+
+        except Exception as e:
+            logger.error(f"Failed to get records from {table_name}: {str(e)}")
+            raise DatabaseError(f"Failed to get records from {table_name}: {str(e)}")
 
     def close(self):
         """Close database connection pool and connector."""
