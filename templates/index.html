@@ -77,25 +77,26 @@
             margin-bottom: 10px;
         }
         
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
         .tab-button {
             padding: 8px 16px;
             border: none;
             background: #f0f0f0;
             cursor: pointer;
             border-radius: 5px 5px 0 0;
+            margin-right: 4px;
         }
-        
+
         .tab-button.active {
             background: #007bff;
             color: white;
-        }
-        
-        .tab-content {
-            display: none;
-        }
-        
-        .tab-content.active {
-            display: block;
         }
 
         /* New styles for embeddings visualization */
@@ -222,6 +223,7 @@
 </head>
 <body>
     <h1>PDF Upload and Process</h1>
+    
     <div class="upload-container">
         <form action="/upload" class="dropzone" id="pdfUpload">
             <div class="dz-message" data-dz-message>
@@ -229,16 +231,18 @@
             </div>
         </form>
     </div>
-    
+
     <div class="action-buttons">
         <button id="save-button" class="save-button" disabled>Save Results</button>
     </div>
-    
+
     <div id="error-message"></div>
+    <div id="success-message" class="success-message"></div>
+    
     <div id="loading" class="loading-indicator">
         <div class="spinner"></div>
     </div>
-    
+
     <div class="page-navigation">
         <button id="prev-page" class="page-button" disabled>Previous</button>
         <span class="page-info">Page <span id="current-page">1</span> of <span id="total-pages">1</span></span>
@@ -250,14 +254,15 @@
             <h2>PDF Preview</h2>
             <img id="preview-image" class="preview-image" alt="PDF Preview">
         </div>
-        
+
         <div class="ocr-container">
             <h2>Results</h2>
             <div class="tab-container">
-                <button class="tab-button active" data-tab="original">Original OCR</button>
-                <button class="tab-button" data-tab="improved">Improved OCR</button>
-                <button class="tab-button" data-tab="embeddings">Embeddings</button>
+                <button class="tab-button active" data-tab="original-ocr">Original OCR</button>
+                <button class="tab-button" data-tab="improved-ocr">Improved OCR</button>
+                <button class="tab-button" data-tab="embeddings-ocr">Embeddings</button>
             </div>
+    
             <div id="original-ocr" class="ocr-text tab-content active"></div>
             <div id="improved-ocr" class="ocr-text tab-content"></div>
             <div id="embeddings-ocr" class="tab-content">
@@ -275,15 +280,128 @@
                     <div class="embeddings-chart">
                         <canvas id="embeddings-chart"></canvas>
                     </div>
-                    <div class="embeddings-raw" id="embeddings-raw"></div>
+                    <div id="embeddings-raw" class="embeddings-raw"></div>
                 </div>
             </div>
         </div>
     </div>
-
     <script>
         let currentResults = null;
         let embeddingsChart = null;
+        let currentPage = 1;
+        let totalPages = 1;
+
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                // Update button states
+                document.querySelectorAll('.tab-button').forEach(btn => 
+                    btn.classList.remove('active'));
+                button.classList.add('active');
+                
+                // Update content visibility
+                document.querySelectorAll('.tab-content').forEach(content => 
+                    content.classList.remove('active'));
+                const targetTab = button.getAttribute('data-tab');
+                document.getElementById(targetTab).classList.add('active');
+            });
+        });
+
+        function displayPage(pageIndex) {
+            if (!currentResults || !currentResults.pages) return;
+            
+            // Adjust pageIndex to 0-based for array access
+            const arrayIndex = pageIndex - 1;
+            const page = currentResults.pages[arrayIndex];
+            const preview = currentResults.previews[arrayIndex];
+            
+            // Update preview
+            const previewImage = document.getElementById('preview-image');
+            previewImage.src = `data:image/png;base64,${preview}`;
+            previewImage.style.display = 'inline-block';
+            
+            // Update OCR text
+            document.getElementById('original-ocr').textContent = 
+                page.original_ocr || 'No OCR text available';
+            document.getElementById('improved-ocr').textContent = 
+                page.improved_ocr || 'No improved OCR text available';
+            
+            // Update embeddings visualization if available
+            if (page.embedding && page.embedding.length > 0) {
+                initializeEmbeddingsChart(page.embedding);
+            }
+
+            // Update navigation display
+            updatePageNavigation();
+        }
+
+        function updatePageNavigation() {
+            const prevButton = document.getElementById('prev-page');
+            const nextButton = document.getElementById('next-page');
+            const currentPageSpan = document.getElementById('current-page');
+            const totalPagesSpan = document.getElementById('total-pages');
+            
+            prevButton.disabled = currentPage <= 1;
+            nextButton.disabled = currentPage >= totalPages;
+            currentPageSpan.textContent = currentPage;
+            totalPagesSpan.textContent = totalPages;
+        }
+
+        // Update navigation event listeners
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                displayPage(currentPage);
+            }
+        });
+
+        document.getElementById('next-page').addEventListener('click', () => {
+            if (currentPage < totalPages) {
+                currentPage++;
+                displayPage(currentPage);
+            }
+        });
+
+        // Update Dropzone success handler
+        Dropzone.autoDiscover = false;
+        const myDropzone = new Dropzone("#pdfUpload", {
+            url: "/upload",
+            acceptedFiles: ".pdf",
+            maxFilesize: 16,
+            maxFiles: 1,
+            init: function() {
+                this.on("sending", function() {
+                    document.getElementById('loading').style.display = 'block';
+                    document.getElementById('error-message').style.display = 'none';
+                    document.getElementById('success-message').style.display = 'none';
+                    document.getElementById('save-button').disabled = true;
+                });
+
+                this.on("success", function(file, response) {
+                    document.getElementById('loading').style.display = 'none';
+                    
+                    if (response.previews && response.pages) {
+                        currentResults = response;
+                        currentPage = 1;  // Reset to first page
+                        totalPages = response.pages.length;
+                        
+                        // Display first page
+                        displayPage(currentPage);
+                        
+                        // Enable save button
+                        document.getElementById('save-button').disabled = false;
+                    }
+                });
+
+                this.on("error", function(file, errorMessage) {
+                    document.getElementById('loading').style.display = 'none';
+                    const errorDiv = document.getElementById('error-message');
+                    errorDiv.textContent = typeof errorMessage === 'string' ? 
+                        errorMessage : 'Error uploading file';
+                    errorDiv.style.display = 'block';
+                    document.getElementById('save-button').disabled = true;
+                });
+            }
+        });
 
         function initializeEmbeddingsChart(embeddings) {
             if (embeddingsChart) {
@@ -347,66 +465,14 @@
             });
         }
 
-        // Tab switching functionality stays the same
-        document.querySelectorAll('.tab-button').forEach(button => {
-            button.addEventListener('click', () => {
-                document.querySelectorAll('.tab-button').forEach(btn => 
-                    btn.classList.remove('active'));
-                button.classList.add('active');
-                
-                document.querySelectorAll('.tab-content').forEach(content => 
-                    content.classList.remove('active'));
-                document.getElementById(`${button.dataset.tab}-ocr`).classList.add('active');
-            });
-        });
-
-        Dropzone.options.pdfUpload = {
-            acceptedFiles: ".pdf",
-            maxFilesize: 16,
-            maxFiles: 1,
-            init: function() {
-                this.on("sending", function() {
-                    document.getElementById('loading').style.display = 'block';
-                    document.getElementById('error-message').style.display = 'none';
-                });
-
-                this.on("success", function(file, response) {
-                    document.getElementById('loading').style.display = 'none';
-                    
-                    if (response.preview) {
-                        const previewImage = document.getElementById('preview-image');
-                        previewImage.src = `data:image/png;base64,${response.preview}`;
-                        previewImage.style.display = 'inline-block';
-                        
-                        document.getElementById('original-ocr').textContent = 
-                            response.original_ocr || 'No OCR text available';
-                        document.getElementById('improved-ocr').textContent = 
-                            response.improved_ocr || 'No improved OCR text available';
-                        
-                        if (response.embedding && response.embedding.length > 0) {
-                            initializeEmbeddingsChart(response.embedding);
-                        }
-                    }
-                });
-
-                this.on("error", function(file, errorMessage) {
-                    document.getElementById('loading').style.display = 'none';
-                    const errorDiv = document.getElementById('error-message');
-                    errorDiv.textContent = typeof errorMessage === 'string' ? 
-                        errorMessage : 'Error uploading file';
-                    errorDiv.style.display = 'block';
-                });
-            }
-        };
-        // Add save functionality
+        // Save button handler
         document.getElementById('save-button').addEventListener('click', async () => {
-            if (!currentResults) return;
+            if (!currentResults || !currentResults.pages) return;
 
             const saveButton = document.getElementById('save-button');
             const successMessage = document.getElementById('success-message');
             const errorMessage = document.getElementById('error-message');
             
-            // Disable button and show loading state
             saveButton.disabled = true;
             saveButton.textContent = 'Saving...';
             
@@ -417,7 +483,7 @@
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        results: [currentResults]
+                        pages: currentResults.pages
                     })
                 });
                 
@@ -434,60 +500,11 @@
                 errorMessage.textContent = error.message;
                 errorMessage.style.display = 'block';
                 successMessage.style.display = 'none';
-                // Re-enable save button on error
                 saveButton.disabled = false;
             } finally {
                 saveButton.textContent = 'Save Results';
             }
         });
-
-        Dropzone.options.pdfUpload = {
-            acceptedFiles: ".pdf",
-            maxFilesize: 16,
-            maxFiles: 1,
-            init: function() {
-                this.on("sending", function() {
-                    document.getElementById('loading').style.display = 'block';
-                    document.getElementById('error-message').style.display = 'none';
-                    document.getElementById('success-message').style.display = 'none';
-                    document.getElementById('save-button').disabled = true;
-                });
-
-                this.on("success", function(file, response) {
-                    document.getElementById('loading').style.display = 'none';
-                    
-                    if (response.preview) {
-                        // Store the results for saving later
-                        currentResults = response;
-                        
-                        const previewImage = document.getElementById('preview-image');
-                        previewImage.src = `data:image/png;base64,${response.preview}`;
-                        previewImage.style.display = 'inline-block';
-                        
-                        document.getElementById('original-ocr').textContent = 
-                            response.original_ocr || 'No OCR text available';
-                        document.getElementById('improved-ocr').textContent = 
-                            response.improved_ocr || 'No improved OCR text available';
-                        
-                        if (response.embedding && response.embedding.length > 0) {
-                            initializeEmbeddingsChart(response.embedding);
-                        }
-
-                        // Enable save button
-                        document.getElementById('save-button').disabled = false;
-                    }
-                });
-
-                this.on("error", function(file, errorMessage) {
-                    document.getElementById('loading').style.display = 'none';
-                    const errorDiv = document.getElementById('error-message');
-                    errorDiv.textContent = typeof errorMessage === 'string' ? 
-                        errorMessage : 'Error uploading file';
-                    errorDiv.style.display = 'block';
-                    document.getElementById('save-button').disabled = true;
-                });
-            }
-        };
     </script>
 </body>
 </html>

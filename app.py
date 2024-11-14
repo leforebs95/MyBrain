@@ -6,7 +6,7 @@ import io
 import base64
 from pathlib import Path
 import json
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from dataclasses import asdict
 from dotenv import load_dotenv
 
@@ -82,18 +82,23 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def get_pdf_preview(pdf_path: str) -> Optional[str]:
-    """Convert first page of PDF to base64 encoded image"""
+def get_pdf_previews(pdf_path: str) -> List[str]:
+    """Convert all pages of PDF to base64 encoded images"""
     try:
-        images = convert_from_path(pdf_path, first_page=1, last_page=1)
-        if images:
+        # Convert all pages
+        images = convert_from_path(pdf_path)
+        previews = []
+
+        for image in images:
             img_byte_arr = io.BytesIO()
-            images[0].save(img_byte_arr, format="PNG")
+            image.save(img_byte_arr, format="PNG")
             img_byte_arr = img_byte_arr.getvalue()
-            return base64.b64encode(img_byte_arr).decode()
+            previews.append(base64.b64encode(img_byte_arr).decode())
+
+        return previews
     except Exception as e:
-        print(f"Error generating PDF preview: {str(e)}")
-        return None
+        print(f"Error generating PDF previews: {str(e)}")
+        return []
 
 
 def process_pdf(local_path: str, filename: str) -> Dict:
@@ -107,39 +112,45 @@ def process_pdf(local_path: str, filename: str) -> Dict:
             output_prefix=output_prefix,
         )
 
-        # Create and process job
+        # Create and process jobs - one for each page
         jobs = []
-        for path in gcp_paths:
-            jobs.append(
-                ProcessingJob(
-                    input_bucket="my-brain-vector-store",
-                    input_pdf=path,
-                    output_bucket="my-brain-vector-store",
-                    output_base=f"handwritten-ocr/{filename.replace('.pdf', '_')}",
-                )
+        for i, path in enumerate(gcp_paths):
+            job = ProcessingJob(
+                input_bucket="my-brain-vector-store",
+                input_pdf=path,
+                output_bucket="my-brain-vector-store",
+                output_base=f"handwritten-ocr/{filename.replace('.pdf', '_')}",
             )
+            jobs.append(job)
 
-        # Process single document
+        # Process all pages
         results, progress = brain_processor.batch_process_documents(jobs)
 
-        if results and len(results) > 0:
-            return {
-                "original_ocr": results[0].original_ocr,
-                "improved_ocr": results[0].improved_ocr,
-                "embedding": results[0].embedding,
-                "success": True,
-            }
+        if results:
+            # Format results by page
+            pages = []
+            for i, result in enumerate(results):
+                pages.append(
+                    {
+                        "page_number": i + 1,
+                        "id": result.id,
+                        "input_pdf": result.input_pdf,
+                        "output_base": result.output_base,
+                        "original_ocr": result.original_ocr,
+                        "improved_ocr": result.improved_ocr,
+                        "embedding": result.embedding,
+                        "metadata": (
+                            result.metadata if hasattr(result, "metadata") else {}
+                        ),
+                    }
+                )
+
+            return {"success": True, "pages": pages}
         else:
             return {"success": False, "error": "No results returned from processing"}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
-
-
-@app.route("/")
-def index():
-    """Render the upload form"""
-    return render_template("index.html")
 
 
 @app.route("/upload", methods=["POST"])
@@ -160,21 +171,19 @@ def upload_file():
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         file.save(filepath)
 
-        # Generate preview
-        preview_base64 = get_pdf_preview(filepath)
+        # Generate previews for all pages
+        previews = get_pdf_previews(filepath)
 
         # Process the PDF
         processing_results = process_pdf(filepath, filename)
 
-        if preview_base64 and processing_results["success"]:
+        if previews and processing_results["success"]:
             return jsonify(
                 {
                     "message": "File processed successfully",
                     "filename": filename,
-                    "preview": preview_base64,
-                    "original_ocr": processing_results["original_ocr"],
-                    "improved_ocr": processing_results["improved_ocr"],
-                    "embedding": processing_results["embedding"],
+                    "previews": previews,
+                    "pages": processing_results["pages"],
                 }
             )
         else:
@@ -190,20 +199,20 @@ def save_embeddings():
     """Save embeddings using brain processor"""
     try:
         data = request.json
-        if not data or "results" not in data:
+        if not data or "pages" not in data:
             return jsonify({"error": "No results provided"}), 400
 
         # Convert the JSON results back to OCRResult objects
         ocr_results = []
-        for result in data["results"]:
+        for page in data["pages"]:
             ocr_result = OCRResult(
-                id=result["id"],
-                input_pdf=result["input_pdf"],
-                output_base=result["output_base"],
-                original_ocr=result.get("original_ocr"),
-                improved_ocr=result.get("improved_ocr"),
-                embedding=result.get("embedding"),
-                metadata=result.get("metadata", {}),
+                id=page["id"],
+                input_pdf=page["input_pdf"],
+                output_base=page["output_base"],
+                original_ocr=page.get("original_ocr"),
+                improved_ocr=page.get("improved_ocr"),
+                embedding=page.get("embedding"),
+                metadata=page.get("metadata", {}),
             )
             ocr_results.append(ocr_result)
 
@@ -222,6 +231,12 @@ def save_embeddings():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/")
+def index():
+    """Render the upload form"""
+    return render_template("index.html")
 
 
 @app.route("/chat")
