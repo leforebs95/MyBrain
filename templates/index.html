@@ -291,21 +291,6 @@
         let currentPage = 1;
         let totalPages = 1;
 
-        document.querySelectorAll('.tab-button').forEach(button => {
-            button.addEventListener('click', () => {
-                // Update button states
-                document.querySelectorAll('.tab-button').forEach(btn => 
-                    btn.classList.remove('active'));
-                button.classList.add('active');
-                
-                // Update content visibility
-                document.querySelectorAll('.tab-content').forEach(content => 
-                    content.classList.remove('active'));
-                const targetTab = button.getAttribute('data-tab');
-                document.getElementById(targetTab).classList.add('active');
-            });
-        });
-
         function displayPage(pageIndex) {
             if (!currentResults || !currentResults.pages) return;
             
@@ -319,20 +304,44 @@
             previewImage.src = `data:image/png;base64,${preview}`;
             previewImage.style.display = 'inline-block';
             
-            // Update OCR text
-            document.getElementById('original-ocr').textContent = 
-                page.original_ocr || 'No OCR text available';
-            document.getElementById('improved-ocr').textContent = 
-                page.improved_ocr || 'No improved OCR text available';
+            // Find which tab is currently active
+            const activeTab = document.querySelector('.tab-button.active').getAttribute('data-tab');
             
-            // Update embeddings visualization if available
-            if (page.embedding && page.embedding.length > 0) {
-                initializeEmbeddingsChart(page.embedding);
+            // Update content based on active tab
+            switch(activeTab) {
+                case 'original-ocr':
+                    document.getElementById('original-ocr').textContent = 
+                        page.original_ocr || 'No OCR text available';
+                    break;
+                case 'improved-ocr':
+                    document.getElementById('improved-ocr').textContent = 
+                        page.improved_ocr || 'No improved OCR text available';
+                    break;
+                case 'embeddings-ocr':
+                    if (page.embedding && page.embedding.length > 0) {
+                        initializeEmbeddingsChart(page.embedding);
+                    }
+                    break;
             }
-
-            // Update navigation display
-            updatePageNavigation();
         }
+
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                // Update button states
+                document.querySelectorAll('.tab-button').forEach(btn => 
+                    btn.classList.remove('active'));
+                button.classList.add('active');
+                
+                // Update content visibility
+                document.querySelectorAll('.tab-content').forEach(content => 
+                    content.classList.remove('active'));
+                const targetTab = button.getAttribute('data-tab');
+                document.getElementById(targetTab).classList.add('active');
+
+                // Update the content for the current page in the new tab
+                displayPage(currentPage);
+            });
+        });
 
         function updatePageNavigation() {
             const prevButton = document.getElementById('prev-page');
@@ -340,17 +349,20 @@
             const currentPageSpan = document.getElementById('current-page');
             const totalPagesSpan = document.getElementById('total-pages');
             
+            console.log(`Updating navigation - Current: ${currentPage}, Total: ${totalPages}`);
+
             prevButton.disabled = currentPage <= 1;
             nextButton.disabled = currentPage >= totalPages;
             currentPageSpan.textContent = currentPage;
             totalPagesSpan.textContent = totalPages;
         }
 
-        // Update navigation event listeners
+        // Navigation event listeners
         document.getElementById('prev-page').addEventListener('click', () => {
             if (currentPage > 1) {
                 currentPage--;
                 displayPage(currentPage);
+                updatePageNavigation();
             }
         });
 
@@ -358,8 +370,10 @@
             if (currentPage < totalPages) {
                 currentPage++;
                 displayPage(currentPage);
+                updatePageNavigation();
             }
         });
+
 
         // Update Dropzone success handler
         Dropzone.autoDiscover = false;
@@ -381,11 +395,14 @@
                     
                     if (response.previews && response.pages) {
                         currentResults = response;
-                        currentPage = 1;  // Reset to first page
-                        totalPages = response.pages.length;
+                        currentPage = 1;
+                        // Make sure we're getting the correct page count from previews
+                        totalPages = response.previews.length;  // Changed from response.pages.length
+                        console.log(`Total pages detected: ${totalPages}`);  // Debug log
                         
                         // Display first page
                         displayPage(currentPage);
+                        updatePageNavigation();
                         
                         // Enable save button
                         document.getElementById('save-button').disabled = false;
