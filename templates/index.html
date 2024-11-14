@@ -186,6 +186,38 @@
             border-radius: 5px;
             display: none;
         }
+
+        .page-navigation {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        .page-button {
+            padding: 5px 10px;
+            border: 1px solid #007bff;
+            background: white;
+            color: #007bff;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        
+        .page-button.active {
+            background: #007bff;
+            color: white;
+        }
+        
+        .page-button:disabled {
+            border-color: #ccc;
+            color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .page-info {
+            margin: 0 10px;
+        }
     </style>
 </head>
 <body>
@@ -207,6 +239,12 @@
         <div class="spinner"></div>
     </div>
     
+    <div class="page-navigation">
+        <button id="prev-page" class="page-button" disabled>Previous</button>
+        <span class="page-info">Page <span id="current-page">1</span> of <span id="total-pages">1</span></span>
+        <button id="next-page" class="page-button" disabled>Next</button>
+    </div>
+
     <div class="results-container">
         <div class="preview-container">
             <h2>PDF Preview</h2>
