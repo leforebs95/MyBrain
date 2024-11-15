@@ -115,11 +115,12 @@ def process_pdf(local_path: str, filename: str) -> Dict:
         # Create and process jobs - one for each page
         jobs = []
         for i, path in enumerate(gcp_paths):
+            print(f"Processing page {i + 1} at {path}")
             job = ProcessingJob(
                 input_bucket="my-brain-vector-store",
                 input_pdf=path,
                 output_bucket="my-brain-vector-store",
-                output_base=f"handwritten-ocr/{filename.replace('.pdf', '_')}",
+                output_base=f"handwritten-ocr/{path.replace('handwritten-notes/', '').replace('.pdf', '_')}",
             )
             jobs.append(job)
 
@@ -130,20 +131,9 @@ def process_pdf(local_path: str, filename: str) -> Dict:
             # Format results by page
             pages = []
             for i, result in enumerate(results):
-                pages.append(
-                    {
-                        "page_number": i + 1,
-                        "id": result.id,
-                        "input_pdf": result.input_pdf,
-                        "output_base": result.output_base,
-                        "original_ocr": result.original_ocr,
-                        "improved_ocr": result.improved_ocr,
-                        "embedding": result.embedding,
-                        "metadata": (
-                            result.metadata if hasattr(result, "metadata") else {}
-                        ),
-                    }
-                )
+                result_dict = asdict(result)
+                result_dict["page_number"] = i + 1
+                pages.append(result_dict)
 
             return {"success": True, "pages": pages}
         else:
@@ -212,7 +202,7 @@ def save_embeddings():
                 original_ocr=page.get("original_ocr"),
                 improved_ocr=page.get("improved_ocr"),
                 embedding=page.get("embedding"),
-                metadata=page.get("metadata", {}),
+                doc_metadata=page.get("doc_metadata", {}),
             )
             ocr_results.append(ocr_result)
 

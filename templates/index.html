@@ -307,21 +307,15 @@
             // Find which tab is currently active
             const activeTab = document.querySelector('.tab-button.active').getAttribute('data-tab');
             
-            // Update content based on active tab
-            switch(activeTab) {
-                case 'original-ocr':
-                    document.getElementById('original-ocr').textContent = 
-                        page.original_ocr || 'No OCR text available';
-                    break;
-                case 'improved-ocr':
-                    document.getElementById('improved-ocr').textContent = 
-                        page.improved_ocr || 'No improved OCR text available';
-                    break;
-                case 'embeddings-ocr':
-                    if (page.embedding && page.embedding.length > 0) {
-                        initializeEmbeddingsChart(page.embedding);
-                    }
-                    break;
+            // Update all content immediately
+            document.getElementById('original-ocr').textContent = 
+                page.original_ocr || 'No OCR text available';
+            document.getElementById('improved-ocr').textContent = 
+                page.improved_ocr || 'No improved OCR text available';
+                
+            // Update embeddings if available
+            if (page.embedding && page.embedding.length > 0) {
+                initializeEmbeddingsChart(page.embedding);
             }
         }
 
