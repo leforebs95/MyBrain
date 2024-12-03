@@ -52,6 +52,6 @@ Rome transitioned from a republic to an empire in 27 BCE, with Augustus becoming
 </summary>
 
 <references>
-- \"Transitioned to an empire in 27 BCE under Augustus\" (Section 1: Ancient Rome)
-- \"Notable emperors: Augustus, Trajan, Hadrian, Marcus Aurelius\" (Section 2: Roman Empire)
+- \"Transitioned to an empire in 27 BCE under Augustus\" (<id></id>)
+- \"Notable emperors: Augustus, Trajan, Hadrian, Marcus Aurelius\" (<id></id>)
 </references>

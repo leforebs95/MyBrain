@@ -1,0 +1,27 @@
+<summary>
+The key points on prompt engineering with Claude based on the provided context are:
+
+- A prompt must begin with "User:" and alternate between "User" and "Assistant" with newlines.
+- System prompts are used to provide context, instructions, and guidelines, separate from the prompt.
+- Providing a role and details about the role and audience within the system prompt can improve performance and dictate responses.
+- Prompt templates can be used to inject variables into a general prompt, simplifying repetitive tasks.
+- XML tags can be used to separate variables and prompts, making the output clearer and more understandable.
+- The beginning of Claude's response can be provided with the "Assistant" designation.
+- A stop sequence can be passed to Claude's API.
+- Providing time for Claude to think step-by-step can increase performance.
+- Asking for positive and negative positions, and comparing them, can help clarify the desired outcome.
+- Few-shot prompting, using examples, can improve responses.
+</summary>
+
+<references>
+- "A prompt must begin with "User:" Equally alternate between "User" + "Assistant" Separate "User" + "Assistant" w/ newlines" (Prompt Engineering w/ Claude)
+- "System prompts are leveraged to provide context, instructions, and guidelines." (Prompt Engineering w/ Claude)
+- "Providing a role within a system prompt can improve performance and dictate responses" (Prompt Engineering w/ Claude)
+- "Prompt templates can be used to inject variables into a general prompt." (Prompt Engineering w/ Claude)
+- "Use XML tags to separate variables and prompts" (Prompt Engineering w/ Claude)
+- "You can provide the beginning of Claude's response with the Assistant designation" (Prompt Engineering w/ Claude)
+- "A stop sequence can be passed to Claude's API as well" (Prompt Engineering w/ Claude)
+- "Providing time to think step by step can increase performance" (Prompt Engineering w/ Claude)
+- "Ask to provide positive & negative positions and compare the positions" (Prompt Engineering w/ Claude)
+- "Few-shot prompting utilizes providing examples in order to improve responses" (Prompt Engineering w/ Claude)
+</references>
