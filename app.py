@@ -40,7 +40,7 @@ def init_processors(config: Dict) -> tuple:
     embedding_generator = EmbeddingGenerator(config["voyage_api_key"])
     rag_claude = RAGClaudeClient(
         config["anthropic_api_key"],
-        "my_brain_example_deployment_01JCMN355HEGT61CDQFBZYPK7R",  # You might want to make this configurable
+        config["vs_deployment_id"],
         vector_store,
         embedding_generator,
         brain_processor.database_manager,
@@ -66,6 +66,7 @@ def load_config():
         ),
         "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY"),
         "voyage_api_key": os.getenv("VOYAGE_API_KEY"),
+        "vs_deployment_id": os.getenv("MY_BRAIN_VS_DEPLOYMENT_ID"),
     }
 
 
@@ -126,6 +127,9 @@ def process_pdf(local_path: str, filename: str) -> Dict:
 
         # Process all pages
         results, progress = brain_processor.batch_process_documents(jobs)
+
+        # Sort results by page number
+        results.sort(key=lambda x: int(x.id.split("_pg")[-1]))
 
         if results:
             # Format results by page

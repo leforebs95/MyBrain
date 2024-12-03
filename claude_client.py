@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 import logging
 from typing import Dict, List, Optional, Union, Any
@@ -326,7 +327,7 @@ class RAGClaudeClient:
                 f"RAG Claude client initialization failed: {str(e)}"
             )
 
-    def _get_relevant_context(self, query: str, k: int = 3) -> List[str]:
+    def _get_relevant_context(self, query: str, k: int = 3) -> List[dict]:
         """
         Retrieve relevant context chunks based on query similarity.
 
@@ -356,7 +357,7 @@ class RAGClaudeClient:
             for nn_id in nn_ids:
                 document = self.database_manager.find_document_by_id(nn_id)
                 if document and "improved_ocr" in document:
-                    context.append(document["improved_ocr"])
+                    context.append({document["id"]: document["improved_ocr"]})
                 else:
                     logger.warning(
                         f"Document with ID {nn_id} does not contain 'improved_ocr'"
@@ -367,7 +368,7 @@ class RAGClaudeClient:
             logger.error(f"Failed to retrieve relevant context: {str(e)}")
             raise BrainProcessingError(f"Failed to retrieve relevant context: {str(e)}")
 
-    def _build_prompt(self, query: str, context_chunks: List[str]) -> str:
+    def _build_prompt(self, query: str, context_chunks: List[dict]) -> str:
         """
         Build a prompt combining query and context.
 
@@ -378,17 +379,18 @@ class RAGClaudeClient:
         Returns:
             Formatted prompt string
         """
-        context_str = "\n\n".join(context_chunks)
+
         return f"""Context information is below.
----------------------
-{context_str}
----------------------
+                    ---------------------
+                    {json.dumps(context_chunks)}
+                    ---------------------
 
-Given the context information, please answer the following question:
-{query}
+                    Given the context information, please answer the following question:
+                    {query}
 
-Remember to only use information from the provided context. If the context doesn't 
-contain enough information to fully answer the question, please say so."""
+                    Remember to only use information from the provided context. If the context doesn't 
+                    contain enough information to fully answer the question, please say so.
+                    """
 
     @retry_with_backoff()
     def chat(

@@ -374,11 +374,11 @@ class BrainProcessor:
 
             progress.completed_jobs = len(results)
             progress.end_time = datetime.now()
-            self.vector_store.update_index(
-                "5003336458287710208",
-                bucket="my-brain-vector-store",
-                prefix="handwritten-embeddings/batch_root/",
-            )
+            # self.vector_store.update_index(
+            #     "5003336458287710208",
+            #     bucket="my-brain-vector-store",
+            #     prefix="handwritten-embeddings/batch_root/",
+            # )
             return json_str, progress
 
         except Exception as e:
